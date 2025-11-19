@@ -64,3 +64,8 @@ typedef enum {
 } mcuTypeId_e;
 
 mcuTypeId_e getMcuTypeId(void);
+
+#define USE_CLI_DEBUG_PRINT
+#ifdef USE_CLI_DEBUG_PRINT
+#include "cli/cli.h"
+#endif
