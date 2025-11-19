@@ -35,7 +35,8 @@ typedef enum {
     PORT_IDLE,
     PORT_MSP_PACKET,
     PORT_CLI_ACTIVE,
-    PORT_CLI_CMD
+    PORT_CLI_CMD,
+    PORT_CLI_DEBUG_ACTIVE
 } mspPortState_e;
 
 typedef enum {
@@ -74,6 +75,7 @@ typedef enum {
     MSP_PENDING_BOOTLOADER_ROM,
     MSP_PENDING_CLI,
     MSP_PENDING_BOOTLOADER_FLASH,
+    MSP_PENDING_CLI_DEBUG
 } mspPendingSystemRequest_e;
 
 #define MSP_PORT_INBUF_SIZE 192

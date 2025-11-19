@@ -463,6 +463,14 @@ static void mspProcessPendingRequest(mspPort_t * mspPort)
 
         cliEnter(mspPort->port, true);
         break;
+#ifdef USE_CLI_DEBUG_PRINT
+    case MSP_PENDING_CLI_DEBUG:
+        mspPort->pendingRequest = MSP_PENDING_NONE;
+        mspPort->portState = PORT_CLI_DEBUG_ACTIVE;
+
+        cliEnter(mspPort->port, false);
+        break;
+#endif
 #endif
 
     default:
@@ -551,6 +559,10 @@ void mspSerialProcess(mspEvaluateNonMspData_e evaluateNonMspData, mspProcessComm
 #ifdef USE_CLI
                 } else if (c == '#') {
                     mspPort->pendingRequest = MSP_PENDING_CLI;
+#ifdef USE_CLI_DEBUG_PRINT
+                } else if (c == '@') {
+                    mspPort->pendingRequest = MSP_PENDING_CLI_DEBUG;
+#endif
                 } else if (c == 0x2) {
                     mspPort->portState = PORT_CLI_CMD;
                     cliEnter(mspPort->port, false);
@@ -569,6 +581,9 @@ void mspSerialProcess(mspEvaluateNonMspData_e evaluateNonMspData, mspProcessComm
 #ifdef USE_CLI
         case PORT_CLI_ACTIVE:
         case PORT_CLI_CMD:
+#ifdef USE_CLI_DEBUG_PRINT
+        case PORT_CLI_DEBUG_ACTIVE:
+#endif
             if (!cliProcess()) {
                 mspPort->portState = PORT_IDLE;
             }
@@ -613,7 +628,7 @@ int mspSerialPush(serialPortIdentifier_e port, uint8_t cmd, uint8_t *data, int d
             || mspPort->port->identifier == SERIAL_PORT_USB_VCP
 #endif
             || (port != SERIAL_PORT_ALL && mspPort->port->identifier != port)
-            || mspPort->portState == PORT_CLI_CMD || mspPort->portState == PORT_CLI_ACTIVE) {
+            || mspPort->portState == PORT_CLI_CMD || mspPort->portState == PORT_CLI_ACTIVE || mspPort->portState == PORT_CLI_DEBUG_ACTIVE) {
             continue;
         }
 
