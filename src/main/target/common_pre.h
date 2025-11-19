@@ -433,6 +433,7 @@
 #if defined(USE_SERIALRX_CRSF)
 
 #define USE_CRSF_V3
+#define USE_CRSF_ACCGYRO_TELEMETRY
 
 #if defined(USE_TELEMETRY_CRSF) && defined(USE_CMS)
 #define USE_CRSF_CMS_TELEMETRY

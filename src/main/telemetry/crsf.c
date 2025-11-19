@@ -524,6 +524,23 @@ void speedNegotiationProcess(timeUs_t currentTimeUs)
 #endif
     }
 }
+
+#if defined(USE_CRSF_ACCGYRO_TELEMETRY)
+/*
+0x41 AccGyro
+Payload:
+int16_t    origin_add ( Origin Device address )
+*/
+void crsfFrameAccGyro(sbuf_t *dst)
+{
+    uint8_t *lengthPtr = sbufPtr(dst);
+    sbufWriteU8(dst, 0);
+    sbufWriteU8(dst, CRSF_FRAMETYPE_ACCGYRO);
+    sbufWriteU8(dst, CRSF_ADDRESS_CRSF_RECEIVER);
+    sbufWriteU8(dst, CRSF_ADDRESS_FLIGHT_CONTROLLER);
+    *lengthPtr = sbufPtr(dst) - lengthPtr;
+}
+#endif
 #endif
 
 #if defined(USE_CRSF_CMS_TELEMETRY)
@@ -623,6 +640,9 @@ typedef enum {
     CRSF_FRAME_FLIGHT_MODE_INDEX,
     CRSF_FRAME_GPS_INDEX,
     CRSF_FRAME_HEARTBEAT_INDEX,
+#ifdef USE_CRSF_ACCGYRO_TELEMETRY
+    CRSF_FRAME_ACCGYRO_INDEX,
+#endif
     CRSF_SCHEDULE_COUNT_MAX
 } crsfFrameTypeIndex_e;
 
@@ -699,6 +719,14 @@ static void processCrsf(void)
         crsfFrameHeartbeat(dst);
         crsfFinalize(dst);
     }
+
+#ifdef USE_CRSF_ACCGYRO_TELEMETRY
+    if (currentSchedule & BIT(CRSF_FRAME_ACCGYRO_INDEX)) {
+        crsfInitializeFrame(dst);
+        crsfFrameAccGyro(dst);
+        crsfFinalize(dst);
+    }
+#endif
 #endif
 
     crsfScheduleIndex = (crsfScheduleIndex + 1) % crsfScheduleCount;
@@ -766,6 +794,9 @@ void initCrsfTelemetry(void)
         // schedule heartbeat to ensure that telemetry/heartbeat frames are sent at minimum 50Hz
         crsfSchedule[index++] = BIT(CRSF_FRAME_HEARTBEAT_INDEX);
     }
+#if defined(USE_CRSF_ACCGYRO_TELEMETRY)
+    crsfSchedule[index++] = BIT(CRSF_FRAME_ACCGYRO_INDEX);
+#endif
 #endif
 
     crsfScheduleCount = (uint8_t)index;

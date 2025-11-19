@@ -251,6 +251,7 @@
 #undef USE_TELEMETRY_CRSF
 #undef USE_CRSF_LINK_STATISTICS
 #undef USE_CRSF_V3
+#undef USE_CRSF_ACCGYRO_TELEMETRY
 #endif
 
 #if !defined(USE_RX_EXPRESSLRS) && !defined(USE_SERIALRX_CRSF)
@@ -267,6 +268,7 @@
 
 #if !defined(USE_TELEMETRY_CRSF)
 #undef USE_CRSF_V3
+#undef USE_CRSF_ACCGYRO_TELEMETRY
 #endif
 
 #if !defined(USE_SERIALRX_JETIEXBUS)
