@@ -63,6 +63,8 @@
 
 #include "sensors/battery.h"
 #include "sensors/sensors.h"
+#include "sensors/acceleration.h"
+#include "sensors/gyro.h"
 
 #include "telemetry/telemetry.h"
 #include "telemetry/msp_shared.h"
@@ -533,11 +535,28 @@ int16_t    origin_add ( Origin Device address )
 */
 void crsfFrameAccGyro(sbuf_t *dst)
 {
+    float gyroAverage[XYZ_AXIS_COUNT];
+    for (int axis = 0; axis < XYZ_AXIS_COUNT; ++axis) {
+        gyroAverage[axis] = gyroGetFilteredDownsampled(axis);
+    }
+
+#define GRAVITY_EARTH  (9.80665f)
+    // scale to +- 4000dps in 16bits
+#define DEGREES_TO_4KDPS16BIT(x) (int16_t)(x * 32768 / 4000)
+    // scale to +- 32G in 16bits
+#define ACCMSS_TO_32G16BIT(x) (int16_t)(x *  32768 / (32 *  GRAVITY_EARTH))
+
     uint8_t *lengthPtr = sbufPtr(dst);
     sbufWriteU8(dst, 0);
     sbufWriteU8(dst, CRSF_FRAMETYPE_ACCGYRO);
     sbufWriteU8(dst, CRSF_ADDRESS_CRSF_RECEIVER);
     sbufWriteU8(dst, CRSF_ADDRESS_FLIGHT_CONTROLLER);
+    sbufWriteU16BigEndian(dst, DEGREES_TO_4KDPS16BIT(gyroAverage[X]));
+    sbufWriteU16BigEndian(dst, DEGREES_TO_4KDPS16BIT(gyroAverage[Y]));
+    sbufWriteU16BigEndian(dst, DEGREES_TO_4KDPS16BIT(gyroAverage[Z]));
+    sbufWriteU16BigEndian(dst, ACCMSS_TO_32G16BIT(acc.accADC[X]));
+    sbufWriteU16BigEndian(dst, ACCMSS_TO_32G16BIT(acc.accADC[X]));
+    sbufWriteU16BigEndian(dst, ACCMSS_TO_32G16BIT(acc.accADC[X]));
     *lengthPtr = sbufPtr(dst) - lengthPtr;
 }
 #endif
