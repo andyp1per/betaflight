@@ -6872,10 +6872,16 @@ static void processCharacterInteractive(const char c)
     }
 }
 
+static timeMs_t lastPrint = 0; 
 bool cliProcess(void)
 {
     if (!cliWriter || !cliMode) {
         return false;
+    }
+
+    if (!cliInteractive && cmp32(millis(), lastPrint) > 1000) {
+        cliPrint("Checking..");
+        lastPrint = millis();
     }
 
     while (serialRxBytesWaiting(cliPort)) {

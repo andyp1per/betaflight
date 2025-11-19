@@ -22,6 +22,8 @@
 
 #include <stdbool.h>
 
+#define USE_CLI_DEBUG_PRINT
+
 extern bool cliMode;
 
 bool cliProcess(void);
