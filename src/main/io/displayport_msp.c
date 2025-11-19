@@ -53,7 +53,7 @@ static int output(displayPort_t *displayPort, uint8_t cmd, uint8_t *buf, int len
 
 #ifdef USE_CLI
     // FIXME There should be no dependency on the CLI but mspSerialPush doesn't check for cli mode, and can't because it also shouldn't have a dependency on the CLI.
-    if (cliMode) {
+    if (cliMode == CLI_MODE_ON) {
         return 0;
     }
 #endif

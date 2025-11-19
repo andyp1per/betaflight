@@ -241,7 +241,7 @@ void vtxUpdate(timeUs_t currentTimeUs)
 {
     static uint8_t currentSchedule = 0;
 
-    if (cliMode) {
+    if (cliMode == CLI_MODE_ON) {
         return;
     }
 

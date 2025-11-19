@@ -27,10 +27,11 @@
 #include <ctype.h>
 
 #include "platform.h"
+#include "cli.h"
 
 // FIXME remove this for targets that don't need a CLI.  Perhaps use a no-op macro when USE_CLI is not enabled
 // signal that we're in cli mode
-bool cliMode = false;
+cliMode_e cliMode = CLI_MODE_OFF;
 
 #ifdef USE_CLI
 
@@ -126,6 +127,7 @@ bool cliMode = false;
 #include "msp/msp.h"
 #include "msp/msp_box.h"
 #include "msp/msp_protocol.h"
+#include "msp/msp_serial.h"
 
 #include "osd/osd.h"
 
@@ -172,9 +174,8 @@ bool cliMode = false;
 #include "telemetry/frsky_hub.h"
 #include "telemetry/telemetry.h"
 
-#include "cli.h"
-
 static serialPort_t *cliPort = NULL;
+static mspPort_t *cliMspPort = NULL;
 
 // Space required to set array parameters
 #define CLI_IN_BUFFER_SIZE 256
@@ -3582,7 +3583,7 @@ static void cliExit(const char *cmdName, char *cmdline)
 
     *cliBuffer = '\0';
     bufferIndex = 0;
-    cliMode = false;
+    cliMode = CLI_MODE_OFF;
     // incase a motor was left running during motortest, clear it here
     mixerResetDisarmedMotors();
     cliReboot();
@@ -6685,7 +6686,7 @@ static void processCharacter(const char c)
         memset(cliBuffer, 0, sizeof(cliBuffer));
 
         // 'exit' will reset this flag, so we don't need to print prompt again
-        if (!cliMode) {
+        if (cliMode == CLI_MODE_OFF) {
             return;
         }
 
@@ -6765,6 +6766,21 @@ void cliProcess(void)
     // Flush the buffer to get rid of any MSP data polls sent by configurator after CLI was invoked
     cliWriterFlush();
 
+    if (cliMode == CLI_MODE_DEBUG) {
+        if (serialRxBytesWaiting(cliPort) && serialRead(cliPort) == '@' && !bufferIndex) {
+            cliPrintLine("-- Exit CLI Debug --");
+            cliWriterFlush();
+            *cliBuffer = '\0';
+            bufferIndex = 0;
+            cliMspPort->port = cliPort;
+            cliPort = NULL;
+            cliMspPort = NULL;
+            cliErrorWriter = cliWriter = NULL;
+            cliMode = CLI_MODE_OFF;
+        }
+        return;
+    }
+
     while (serialRxBytesWaiting(cliPort)) {
         uint8_t c = serialRead(cliPort);
 
@@ -6772,26 +6788,32 @@ void cliProcess(void)
     }
 }
 
-void cliEnter(serialPort_t *serialPort)
+void cliEnter(mspPort_t *mspPort, bool interactive)
 {
-    cliMode = true;
-    cliPort = serialPort;
+    cliMode = interactive ? CLI_MODE_ON : CLI_MODE_DEBUG;
+    cliPort = mspPort->port;
+    cliMspPort = mspPort;
+    mspPort->port = 0;
     setPrintfSerialPort(cliPort);
-    bufWriterInit(&cliWriterDesc, cliWriteBuffer, sizeof(cliWriteBuffer), (bufWrite_t)serialWriteBufBlockingShim, serialPort);
+    bufWriterInit(&cliWriterDesc, cliWriteBuffer, sizeof(cliWriteBuffer), (bufWrite_t)serialWriteBufBlockingShim, cliPort);
     cliErrorWriter = cliWriter = &cliWriterDesc;
 
+    if (cliMode == CLI_MODE_DEBUG) {
+        cliPrintLine("-- CLI Debug --");
+    } else {
 #ifndef MINIMAL_CLI
-    cliPrintLine("\r\nEntering CLI Mode, type 'exit' to return, or 'help'");
+        cliPrintLine("\r\nEntering CLI Mode, type 'exit' to return, or 'help'");
 #else
-    cliPrintLine("\r\nCLI");
+        cliPrintLine("\r\nCLI");
 #endif
-    setArmingDisabled(ARMING_DISABLED_CLI);
+        setArmingDisabled(ARMING_DISABLED_CLI);
 
-    cliPrompt();
+        cliPrompt();
 
 #ifdef USE_CLI_BATCH
-    resetCommandBatch();
+        resetCommandBatch();
 #endif
+    }
 }
 
 #endif // USE_CLI

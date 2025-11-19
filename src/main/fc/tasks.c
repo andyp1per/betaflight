@@ -141,7 +141,9 @@ static void taskHandleSerial(timeUs_t currentTimeUs)
     // in cli mode, all serial stuff goes to here. enter cli mode by sending #
     if (cliMode) {
         cliProcess();
-        return;
+        if (cliMode == CLI_MODE_ON) {
+            return;
+        }
     }
 #endif
     bool evaluateMspData = ARMING_FLAG(ARMED) ? MSP_SKIP_NON_MSP_DATA : MSP_EVALUATE_NON_MSP_DATA;
@@ -309,7 +311,7 @@ void taskUpdateRangefinder(timeUs_t currentTimeUs)
 #ifdef USE_TELEMETRY
 static void taskTelemetry(timeUs_t currentTimeUs)
 {
-    if (!cliMode && featureIsEnabled(FEATURE_TELEMETRY)) {
+    if (cliMode != CLI_MODE_ON && featureIsEnabled(FEATURE_TELEMETRY)) {
         subTaskTelemetryPollSensors(currentTimeUs);
 
         telemetryProcess(currentTimeUs);

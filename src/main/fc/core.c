@@ -963,7 +963,7 @@ void processRxModes(timeUs_t currentTimeUs)
     }
 #endif
 
-    if (!cliMode && !(IS_RC_MODE_ACTIVE(BOXPARALYZE) && !ARMING_FLAG(ARMED))) {
+    if (cliMode != CLI_MODE_ON && !(IS_RC_MODE_ACTIVE(BOXPARALYZE) && !ARMING_FLAG(ARMED))) {
         processRcAdjustments(currentControlRateProfile);
     }
 
@@ -1157,7 +1157,7 @@ static FAST_CODE_NOINLINE void subTaskPidSubprocesses(timeUs_t currentTimeUs)
 #endif
 
 #ifdef USE_BLACKBOX
-    if (!cliMode && blackboxConfig()->device) {
+    if (cliMode != CLI_MODE_ON && blackboxConfig()->device) {
         blackboxUpdate(currentTimeUs);
     }
 #else

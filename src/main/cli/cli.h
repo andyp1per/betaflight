@@ -22,11 +22,17 @@
 
 #include <stdbool.h>
 
-extern bool cliMode;
+typedef enum {
+    CLI_MODE_OFF,
+    CLI_MODE_ON,
+    CLI_MODE_DEBUG
+} cliMode_e;
+
+extern cliMode_e cliMode;
 
 void cliProcess(void);
-struct serialPort_s;
-void cliEnter(struct serialPort_s *serialPort);
+struct mspPort_s;
+void cliEnter(struct mspPort_s *mspPort, bool interactive);
 
 #ifdef USE_CLI_DEBUG_PRINT
 void cliPrint(const char *str);

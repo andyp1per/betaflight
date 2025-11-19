@@ -452,6 +452,8 @@ static void mspEvaluateNonMspData(mspPort_t * mspPort, uint8_t receivedChar)
 #ifdef USE_CLI
    } else if (receivedChar == '#') {
         mspPort->pendingRequest = MSP_PENDING_CLI;
+   } else if (receivedChar == '@') {
+        mspPort->pendingRequest = MSP_PENDING_CLI_DEBUG;
 #endif
     }
 }
@@ -476,8 +478,13 @@ static void mspProcessPendingRequest(mspPort_t * mspPort)
 #endif
 #ifdef USE_CLI
     case MSP_PENDING_CLI:
-        cliEnter(mspPort->port);
+        cliEnter(mspPort, true);
         break;
+#ifdef USE_CLI_DEBUG_PRINT
+    case MSP_PENDING_CLI_DEBUG:
+        cliEnter(mspPort, false);
+        break;
+#endif
 #endif
 
     default:
