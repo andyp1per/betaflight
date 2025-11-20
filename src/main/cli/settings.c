@@ -1267,6 +1267,10 @@ const clivalue_t valueTable[] = {
 #ifdef USE_TELEMETRY
     { "tlm_inverted",               VAR_UINT8  | MASTER_VALUE | MODE_LOOKUP, .config.lookup = { TABLE_OFF_ON }, PG_TELEMETRY_CONFIG, offsetof(telemetryConfig_t, telemetry_inverted) },
     { "tlm_halfduplex",             VAR_UINT8  | MASTER_VALUE | MODE_LOOKUP, .config.lookup = { TABLE_OFF_ON }, PG_TELEMETRY_CONFIG, offsetof(telemetryConfig_t, halfDuplex) },
+#if defined(USE_CRSF_ACCGYRO_TELEMETRY)
+    { "crsf_tlm_accgyro",           VAR_UINT8  | MASTER_VALUE | MODE_LOOKUP, .config.lookup = { TABLE_OFF_ON }, PG_TELEMETRY_CONFIG, offsetof(telemetryConfig_t, crsf_tlm_accgyro) },
+    { "crsf_tlm_rate_hz",           VAR_UINT16 | MASTER_VALUE, .config.minmaxUnsigned = { 0, 65535 }, PG_TELEMETRY_CONFIG, offsetof(telemetryConfig_t, crsf_tlm_rate_hz) },
+#endif
 #if defined(USE_TELEMETRY_FRSKY_HUB)
 #if defined(USE_GPS)
     { "frsky_default_lat",          VAR_INT16  | MASTER_VALUE, .config.minmax = { -9000, 9000 }, PG_TELEMETRY_CONFIG, offsetof(telemetryConfig_t, gpsNoFixLatitude) },

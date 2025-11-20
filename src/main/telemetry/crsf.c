@@ -93,7 +93,7 @@ static mspBuffer_t mspRxBuffer;
 
 #if defined(USE_CRSF_V3)
 
-#define CRSF_TELEMETRY_FRAME_INTERVAL_MAX_US 20000 // 20ms
+#define CRSF_TELEMETRY_FRAME_INTERVAL_MAX_US 20000U // 20ms
 
 #if defined(USE_CRSF_CMS_TELEMETRY)
 #define CRSF_LINK_TYPE_CHECK_US 250000 // 250 ms
@@ -225,6 +225,25 @@ static void crsfFinalize(sbuf_t *dst)
     // write the telemetry frame to the receiver.
     crsfRxWriteTelemetryData(sbufPtr(dst), sbufBytesRemaining(dst));
 }
+
+static bool crsfAccGyroEnabled(void)
+{
+#if defined(USE_CRSF_ACCGYRO_TELEMETRY)
+    return telemetryConfig()->crsf_tlm_accgyro;
+#else
+    return false;
+#endif
+}
+
+static uint32_t crsfTelemetryCycltimeUS(void)
+{
+#if defined(USE_CRSF_ACCGYRO_TELEMETRY)
+    return 1000000U / (uint32_t)(telemetryConfig()->crsf_tlm_rate_hz);
+#else
+    return CRSF_CYCLETIME_US;
+#endif
+}
+
 
 /*
 CRSF frame has the structure:
@@ -526,12 +545,20 @@ void speedNegotiationProcess(timeUs_t currentTimeUs)
 #endif
     }
 }
+#endif
 
 #if defined(USE_CRSF_ACCGYRO_TELEMETRY)
 /*
 0x41 AccGyro
 Payload:
-int16_t    origin_add ( Origin Device address )
+uint8_t destination;
+uint8_t origin;
+int16_t gyro_x;             // LSB = 32768/4000 DPS
+int16_t gyro_y;             // LSB = 32768/4000 DPS
+int16_t gyro_z;             // LSB = 32768/4000 DPS
+int16_t acc_x;              // LSB = 32768/32 G
+int16_t acc_y;              // LSB = 32768/32 G
+int16_t acc_z;              // LSB = 32768/32 G
 */
 void crsfFrameAccGyro(sbuf_t *dst)
 {
@@ -540,11 +567,17 @@ void crsfFrameAccGyro(sbuf_t *dst)
         gyroAverage[axis] = gyroGetFilteredDownsampled(axis);
     }
 
-#define GRAVITY_EARTH  (9.80665f)
-    // scale to +- 4000dps in 16bits
-#define DEGREES_TO_4KDPS16BIT(x) (int16_t)(x * 32768 / 4000)
-    // scale to +- 32G in 16bits
-#define ACCMSS_TO_32G16BIT(x) (int16_t)(x *  32768 / (32 *  GRAVITY_EARTH))
+#define GRAVITY_EARTH (9.80665f)
+
+    float accAverage[XYZ_AXIS_COUNT];
+    for (int axis = 0; axis < XYZ_AXIS_COUNT; ++axis) {
+        accAverage[axis] = acc.accADC[axis] * acc.dev.acc_1G_rec * GRAVITY_EARTH;
+    }
+
+// Convert dps 'x' (max 4000) to 16-bit integer (max 32767)
+#define DEGREES_TO_4KDPS16BIT(x) (int16_t)(((float)(x) * 32767.0f) / 4000.0f)
+// Convert acceleration 'x' in m/s^2 (max 32*g) to 16-bit integer (max 32767)
+#define ACCMSS_TO_32G16BIT(x) (int16_t)(((float)(x) * 32767.0f) / (32.0f * GRAVITY_EARTH))
 
     uint8_t *lengthPtr = sbufPtr(dst);
     sbufWriteU8(dst, 0);
@@ -554,12 +587,11 @@ void crsfFrameAccGyro(sbuf_t *dst)
     sbufWriteU16BigEndian(dst, DEGREES_TO_4KDPS16BIT(gyroAverage[X]));
     sbufWriteU16BigEndian(dst, DEGREES_TO_4KDPS16BIT(gyroAverage[Y]));
     sbufWriteU16BigEndian(dst, DEGREES_TO_4KDPS16BIT(gyroAverage[Z]));
-    sbufWriteU16BigEndian(dst, ACCMSS_TO_32G16BIT(acc.accADC[X]));
-    sbufWriteU16BigEndian(dst, ACCMSS_TO_32G16BIT(acc.accADC[X]));
-    sbufWriteU16BigEndian(dst, ACCMSS_TO_32G16BIT(acc.accADC[X]));
+    sbufWriteU16BigEndian(dst, ACCMSS_TO_32G16BIT(accAverage[X]));
+    sbufWriteU16BigEndian(dst, ACCMSS_TO_32G16BIT(accAverage[Y]));
+    sbufWriteU16BigEndian(dst, ACCMSS_TO_32G16BIT(accAverage[Z]));
     *lengthPtr = sbufPtr(dst) - lengthPtr;
 }
-#endif
 #endif
 
 #if defined(USE_CRSF_CMS_TELEMETRY)
@@ -658,10 +690,10 @@ typedef enum {
     CRSF_FRAME_BATTERY_SENSOR_INDEX,
     CRSF_FRAME_FLIGHT_MODE_INDEX,
     CRSF_FRAME_GPS_INDEX,
-    CRSF_FRAME_HEARTBEAT_INDEX,
 #ifdef USE_CRSF_ACCGYRO_TELEMETRY
     CRSF_FRAME_ACCGYRO_INDEX,
 #endif
+    CRSF_FRAME_HEARTBEAT_INDEX,
     CRSF_SCHEDULE_COUNT_MAX
 } crsfFrameTypeIndex_e;
 
@@ -738,14 +770,13 @@ static void processCrsf(void)
         crsfFrameHeartbeat(dst);
         crsfFinalize(dst);
     }
-
+#endif
 #ifdef USE_CRSF_ACCGYRO_TELEMETRY
     if (currentSchedule & BIT(CRSF_FRAME_ACCGYRO_INDEX)) {
         crsfInitializeFrame(dst);
         crsfFrameAccGyro(dst);
         crsfFinalize(dst);
     }
-#endif
 #endif
 
     crsfScheduleIndex = (crsfScheduleIndex + 1) % crsfScheduleCount;
@@ -790,7 +821,7 @@ void initCrsfTelemetry(void)
     mspReplyPending = false;
 #endif
 
-    int index = 0;
+    uint8_t index = 0;
     if (sensors(SENSOR_ACC) && telemetryIsSensorEnabled(SENSOR_PITCH | SENSOR_ROLL | SENSOR_HEADING)) {
         crsfSchedule[index++] = BIT(CRSF_FRAME_ATTITUDE_INDEX);
     }
@@ -807,18 +838,21 @@ void initCrsfTelemetry(void)
         crsfSchedule[index++] = BIT(CRSF_FRAME_GPS_INDEX);
     }
 #endif
-
-#if defined(USE_CRSF_V3)
-    while (index < (CRSF_CYCLETIME_US / CRSF_TELEMETRY_FRAME_INTERVAL_MAX_US) && index < CRSF_SCHEDULE_COUNT_MAX) {
-        // schedule heartbeat to ensure that telemetry/heartbeat frames are sent at minimum 50Hz
-        crsfSchedule[index++] = BIT(CRSF_FRAME_HEARTBEAT_INDEX);
-    }
 #if defined(USE_CRSF_ACCGYRO_TELEMETRY)
-    crsfSchedule[index++] = BIT(CRSF_FRAME_ACCGYRO_INDEX);
+    if (crsfAccGyroEnabled() && (sensors(SENSOR_ACC) || sensors(SENSOR_GYRO))) {
+        crsfSchedule[index++] = BIT(CRSF_FRAME_ACCGYRO_INDEX);
+    }
 #endif
+#if defined(USE_CRSF_V3)
+    if (!crsfAccGyroEnabled()) {    // fast accgyro is a substitute for heartbeats
+        while (index < (crsfTelemetryCycltimeUS() / CRSF_TELEMETRY_FRAME_INTERVAL_MAX_US) && index < CRSF_SCHEDULE_COUNT_MAX) {
+            // schedule heartbeat to ensure that telemetry/heartbeat frames are sent at minimum 50Hz
+            crsfSchedule[index++] = BIT(CRSF_FRAME_HEARTBEAT_INDEX);
+        }
+    }
 #endif
 
-    crsfScheduleCount = (uint8_t)index;
+    crsfScheduleCount = index;
 
 #if defined(USE_CRSF_CMS_TELEMETRY)
     crsfDisplayportRegister();
@@ -969,7 +1003,8 @@ void handleCrsfTelemetry(timeUs_t currentTimeUs)
 
     // Actual telemetry data only needs to be sent at a low frequency, ie 10Hz
     // Spread out scheduled frames evenly so each frame is sent at the same frequency.
-    if (currentTimeUs >= crsfLastCycleTime + (CRSF_CYCLETIME_US / crsfScheduleCount)) {
+    // speed up the telemetry rate to that configured if using accgyro data
+    if (currentTimeUs >= crsfLastCycleTime + (crsfTelemetryCycltimeUS() / crsfScheduleCount)) {
         crsfLastCycleTime = currentTimeUs;
         processCrsf();
     }

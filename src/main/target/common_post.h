@@ -271,6 +271,10 @@
 #undef USE_CRSF_ACCGYRO_TELEMETRY
 #endif
 
+#if !defined(USE_CRSF_V3)
+#undef USE_CRSF_ACCGYRO_TELEMETRY
+#endif
+
 #if !defined(USE_SERIALRX_JETIEXBUS)
 #undef USE_TELEMETRY_JETIEXBUS
 #endif
