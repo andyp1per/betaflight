@@ -559,6 +559,7 @@ int16_t gyro_z;             // LSB = 32768/4000 DPS
 int16_t acc_x;              // LSB = 32768/32 G
 int16_t acc_y;              // LSB = 32768/32 G
 int16_t acc_z;              // LSB = 32768/32 G
+int16_t gyro_temp;          // C
 */
 void crsfFrameAccGyro(sbuf_t *dst)
 {
@@ -590,6 +591,8 @@ void crsfFrameAccGyro(sbuf_t *dst)
     sbufWriteU16BigEndian(dst, ACCMSS_TO_32G16BIT(accAverage[X]));
     sbufWriteU16BigEndian(dst, ACCMSS_TO_32G16BIT(accAverage[Y]));
     sbufWriteU16BigEndian(dst, ACCMSS_TO_32G16BIT(accAverage[Z]));
+    sbufWriteU16BigEndian(dst, gyroGetTemperature());
+    //cliPrintLinef("IMU is at %dC", gyroGetTemperature());
     *lengthPtr = sbufPtr(dst) - lengthPtr;
 }
 #endif
