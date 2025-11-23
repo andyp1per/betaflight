@@ -40,6 +40,10 @@
 #include "acceleration.h"
 
 FAST_DATA_ZERO_INIT acc_t acc;                       // acc access functions
+#ifdef USE_CRSF_ACCGYRO_TELEMETRY
+static FAST_DATA_ZERO_INIT uint32_t downSampleCount;               // accel sensor sample counter for telemetry
+static FAST_DATA_ZERO_INIT float downSampleSum[XYZ_AXIS_COUNT];   // summed samples used for downsampling for telemetry
+#endif
 
 static void applyAccelerationTrims(const flightDynamicsTrims_t *accelerationTrims)
 {
@@ -78,10 +82,31 @@ void accUpdate(timeUs_t currentTimeUs)
 
     applyAccelerationTrims(accelerationRuntime.accelerationTrims);
 
+#ifdef USE_CRSF_ACCGYRO_TELEMETRY
+    // using simple averaging for telemetry downsampling
+    downSampleSum[X] += acc.accADC[X];
+    downSampleSum[Y] += acc.accADC[Y];
+    downSampleSum[Z] += acc.accADC[Z];
+    downSampleCount++;
+#endif
+
     for (int axis = 0; axis < XYZ_AXIS_COUNT; axis++) {
         const float val = acc.accADC[axis];
         acc.accADC[axis] = accelerationRuntime.accLpfCutHz ? pt2FilterApply(&accelerationRuntime.accFilter[axis], val) : val;
     }
 }
+
+#ifdef USE_CRSF_ACCGYRO_TELEMETRY
+float accelGetDownsampled(int axis)
+{
+    return downSampleSum[axis] / downSampleCount;
+}
+
+void accelStartDownsampledCycle(void)
+{
+    downSampleCount = 0;
+    downSampleSum[X] = downSampleSum[Y] = downSampleSum[Z] = 0;
+}
+#endif
 
 #endif
