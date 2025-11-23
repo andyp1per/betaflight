@@ -549,7 +549,7 @@ void speedNegotiationProcess(timeUs_t currentTimeUs)
 
 #if defined(USE_CRSF_ACCGYRO_TELEMETRY)
 /*
-0x41 AccGyro
+0x41 AccGyro in NED frame
 Payload:
 uint8_t destination;
 uint8_t origin;
@@ -565,14 +565,14 @@ void crsfFrameAccGyro(sbuf_t *dst)
 {
     float gyroAverage[XYZ_AXIS_COUNT];
     for (int axis = 0; axis < XYZ_AXIS_COUNT; ++axis) {
-        gyroAverage[axis] = gyroGetFilteredDownsampled(axis);
+        gyroAverage[axis] = gyroGetDownsampled(axis);
     }
 
 #define GRAVITY_EARTH (9.80665f)
 
     float accAverage[XYZ_AXIS_COUNT];
     for (int axis = 0; axis < XYZ_AXIS_COUNT; ++axis) {
-        accAverage[axis] = acc.accADC[axis] * acc.dev.acc_1G_rec * GRAVITY_EARTH;
+        accAverage[axis] = accelGetDownsampled(axis) * acc.dev.acc_1G_rec * GRAVITY_EARTH;
     }
 
 // Convert dps 'x' (max 4000) to 16-bit integer (max 32767)
@@ -593,7 +593,15 @@ void crsfFrameAccGyro(sbuf_t *dst)
     sbufWriteU16BigEndian(dst, ACCMSS_TO_32G16BIT(accAverage[Z]));
     sbufWriteU16BigEndian(dst, gyroGetTemperature());
     //cliPrintLinef("IMU is at %dC", gyroGetTemperature());
+#define FLOATP(x) (((int)(x*10))/10)
+#define FLOATPR(x) x<0?(((int)(-x*10))%10):(((int)(x*10))%10)
+    //cliPrintLinef("IMU Gyr: %d.%d %d.%d %d.%d, Acc: %d.%d %d.%d %d.%d",
+    //    FLOATP(gyroAverage[X]), FLOATPR(gyroAverage[X]), FLOATP(gyroAverage[Y]), FLOATPR(gyroAverage[Y]), FLOATP(gyroAverage[Z]), FLOATPR(gyroAverage[Z]),
+    //    FLOATP(accAverage[X]), FLOATPR(accAverage[X]), FLOATP(accAverage[Y]), FLOATPR(accAverage[Y]), FLOATP(accAverage[Z]), FLOATPR(accAverage[Z]));
     *lengthPtr = sbufPtr(dst) - lengthPtr;
+
+    gyroStartDownsampledCycle();
+    accelStartDownsampledCycle();
 }
 #endif
 
