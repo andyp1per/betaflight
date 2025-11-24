@@ -21,6 +21,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
+#include <limits.h>
 
 #include "platform.h"
 
@@ -549,19 +550,20 @@ void speedNegotiationProcess(timeUs_t currentTimeUs)
 
 #if defined(USE_CRSF_ACCGYRO_TELEMETRY)
 /*
-0x41 AccGyro in NED frame
+0x41 AccGyro in NED frame, samples are raw data averaged over the sample interval
 Payload:
 uint8_t destination;
 uint8_t origin;
-int16_t gyro_x;             // LSB = 32768/4000 DPS
-int16_t gyro_y;             // LSB = 32768/4000 DPS
-int16_t gyro_z;             // LSB = 32768/4000 DPS
-int16_t acc_x;              // LSB = 32768/32 G
-int16_t acc_y;              // LSB = 32768/32 G
-int16_t acc_z;              // LSB = 32768/32 G
+int32_t gyro_x;             // LSB = INT_MAX/4000 DPS
+int32_t gyro_y;             // LSB = INT_MAX/4000 DPS
+int32_t gyro_z;             // LSB = INT_MAX/4000 DPS
+int32_t acc_x;              // LSB = INT_MAX/32 G
+int32_t acc_y;              // LSB = INT_MAX/32 G
+int32_t acc_z;              // LSB = INT_MAX/32 G
 int16_t gyro_temp;          // C
+uint32_t sample_time;       // Timestamp of the sample in us
 */
-void crsfFrameAccGyro(sbuf_t *dst)
+void crsfFrameAccGyro(sbuf_t *dst, timeUs_t currentTimeUs)
 {
     float gyroAverage[XYZ_AXIS_COUNT];
     for (int axis = 0; axis < XYZ_AXIS_COUNT; ++axis) {
@@ -576,22 +578,23 @@ void crsfFrameAccGyro(sbuf_t *dst)
     }
 
 // Convert dps 'x' (max 4000) to 16-bit integer (max 32767)
-#define DEGREES_TO_4KDPS16BIT(x) (int16_t)(((float)(x) * 32767.0f) / 4000.0f)
+#define DEGREES_TO_4KDPS16BIT(x) (int32_t)(((float)(x) * INT_MAX) / 4000.0f)
 // Convert acceleration 'x' in m/s^2 (max 32*g) to 16-bit integer (max 32767)
-#define ACCMSS_TO_32G16BIT(x) (int16_t)(((float)(x) * 32767.0f) / (32.0f * GRAVITY_EARTH))
+#define ACCMSS_TO_32G16BIT(x) (int32_t)(((float)(x) * INT_MAX) / (32.0f * GRAVITY_EARTH))
 
     uint8_t *lengthPtr = sbufPtr(dst);
     sbufWriteU8(dst, 0);
     sbufWriteU8(dst, CRSF_FRAMETYPE_ACCGYRO);
     sbufWriteU8(dst, CRSF_ADDRESS_CRSF_RECEIVER);
     sbufWriteU8(dst, CRSF_ADDRESS_FLIGHT_CONTROLLER);
-    sbufWriteU16BigEndian(dst, DEGREES_TO_4KDPS16BIT(gyroAverage[X]));
-    sbufWriteU16BigEndian(dst, DEGREES_TO_4KDPS16BIT(gyroAverage[Y]));
-    sbufWriteU16BigEndian(dst, DEGREES_TO_4KDPS16BIT(gyroAverage[Z]));
-    sbufWriteU16BigEndian(dst, ACCMSS_TO_32G16BIT(accAverage[X]));
-    sbufWriteU16BigEndian(dst, ACCMSS_TO_32G16BIT(accAverage[Y]));
-    sbufWriteU16BigEndian(dst, ACCMSS_TO_32G16BIT(accAverage[Z]));
+    sbufWriteU32BigEndian(dst, DEGREES_TO_4KDPS16BIT(gyroAverage[X]));
+    sbufWriteU32BigEndian(dst, DEGREES_TO_4KDPS16BIT(gyroAverage[Y]));
+    sbufWriteU32BigEndian(dst, DEGREES_TO_4KDPS16BIT(gyroAverage[Z]));
+    sbufWriteU32BigEndian(dst, ACCMSS_TO_32G16BIT(accAverage[X]));
+    sbufWriteU32BigEndian(dst, ACCMSS_TO_32G16BIT(accAverage[Y]));
+    sbufWriteU32BigEndian(dst, ACCMSS_TO_32G16BIT(accAverage[Z]));
     sbufWriteU16BigEndian(dst, gyroGetTemperature());
+    sbufWriteU32BigEndian(dst, currentTimeUs);
     //cliPrintLinef("IMU is at %dC", gyroGetTemperature());
 #define FLOATP(x) (((int)(x*10))/10)
 #define FLOATPR(x) x<0?(((int)(-x*10))%10):(((int)(x*10))%10)
@@ -738,7 +741,7 @@ static void crsfSendMspResponse(uint8_t *payload, const uint8_t payloadSize)
 }
 #endif
 
-static void processCrsf(void)
+static void processCrsf(timeUs_t currentTimeUs)
 {
     if (!crsfRxIsTelemetryBufEmpty()) {
         return; // do nothing if telemetry ouptut buffer is not empty yet.
@@ -785,7 +788,7 @@ static void processCrsf(void)
 #ifdef USE_CRSF_ACCGYRO_TELEMETRY
     if (currentSchedule & BIT(CRSF_FRAME_ACCGYRO_INDEX)) {
         crsfInitializeFrame(dst);
-        crsfFrameAccGyro(dst);
+        crsfFrameAccGyro(dst, currentTimeUs);
         crsfFinalize(dst);
     }
 #endif
@@ -1017,7 +1020,7 @@ void handleCrsfTelemetry(timeUs_t currentTimeUs)
     // speed up the telemetry rate to that configured if using accgyro data
     if (currentTimeUs >= crsfLastCycleTime + (crsfTelemetryCycltimeUS() / crsfScheduleCount)) {
         crsfLastCycleTime = currentTimeUs;
-        processCrsf();
+        processCrsf(currentTimeUs);
     }
 }
 
