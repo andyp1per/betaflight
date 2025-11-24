@@ -550,18 +550,24 @@ void speedNegotiationProcess(timeUs_t currentTimeUs)
 
 #if defined(USE_CRSF_ACCGYRO_TELEMETRY)
 /*
-0x41 AccGyro in NED frame, samples are raw data averaged over the sample interval
+0x41 AccGyro in NEU bodyframe, samples are raw data averaged over the sample interval
+Accel: +ve X = foward
+       +ve Y = right
+       +ve Z = up
+Gyro:  +ve X = roll left
+       +ve Y = pitch up
+       +ve Z = yaw clockwise
 Payload:
-uint8_t destination;
-uint8_t origin;
-int32_t gyro_x;             // LSB = INT_MAX/4000 DPS
-int32_t gyro_y;             // LSB = INT_MAX/4000 DPS
-int32_t gyro_z;             // LSB = INT_MAX/4000 DPS
-int32_t acc_x;              // LSB = INT_MAX/32 G
-int32_t acc_y;              // LSB = INT_MAX/32 G
-int32_t acc_z;              // LSB = INT_MAX/32 G
-int16_t gyro_temp;          // C
-uint32_t sample_time;       // Timestamp of the sample in us
+    uint8_t destination;
+    uint8_t origin;
+    int32_t gyro_x;             // LSB = INT_MAX/4000 DPS
+    int32_t gyro_y;             // LSB = INT_MAX/4000 DPS
+    int32_t gyro_z;             // LSB = INT_MAX/4000 DPS
+    int32_t acc_x;              // LSB = INT_MAX/32 G
+    int32_t acc_y;              // LSB = INT_MAX/32 G
+    int32_t acc_z;              // LSB = INT_MAX/32 G
+    int16_t gyro_temp;          // C
+    uint32_t sample_time;       // Timestamp of the sample in us
 */
 void crsfFrameAccGyro(sbuf_t *dst, timeUs_t currentTimeUs)
 {
@@ -588,11 +594,11 @@ void crsfFrameAccGyro(sbuf_t *dst, timeUs_t currentTimeUs)
     sbufWriteU8(dst, CRSF_ADDRESS_CRSF_RECEIVER);
     sbufWriteU8(dst, CRSF_ADDRESS_FLIGHT_CONTROLLER);
     sbufWriteU32BigEndian(dst, DEGREES_TO_4KDPS16BIT(gyroAverage[X]));
-    sbufWriteU32BigEndian(dst, DEGREES_TO_4KDPS16BIT(gyroAverage[Y]));
-    sbufWriteU32BigEndian(dst, DEGREES_TO_4KDPS16BIT(gyroAverage[Z]));
+    sbufWriteU32BigEndian(dst, DEGREES_TO_4KDPS16BIT(-gyroAverage[Y]));
+    sbufWriteU32BigEndian(dst, DEGREES_TO_4KDPS16BIT(-gyroAverage[Z]));
     sbufWriteU32BigEndian(dst, ACCMSS_TO_32G16BIT(accAverage[X]));
-    sbufWriteU32BigEndian(dst, ACCMSS_TO_32G16BIT(accAverage[Y]));
-    sbufWriteU32BigEndian(dst, ACCMSS_TO_32G16BIT(accAverage[Z]));
+    sbufWriteU32BigEndian(dst, ACCMSS_TO_32G16BIT(-accAverage[Y]));
+    sbufWriteU32BigEndian(dst, ACCMSS_TO_32G16BIT(-accAverage[Z]));
     sbufWriteU16BigEndian(dst, gyroGetTemperature());
     sbufWriteU32BigEndian(dst, currentTimeUs);
     //cliPrintLinef("IMU is at %dC", gyroGetTemperature());
