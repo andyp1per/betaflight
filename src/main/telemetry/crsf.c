@@ -73,7 +73,7 @@
 #include "crsf.h"
 
 
-#define CRSF_CYCLETIME_US                   100000 // 100ms, 10 Hz
+#define CRSF_CYCLETIME_US                   100000 // 100ms, 10 Hz -- all telemetry frames are inserted in this timeslice
 #define CRSF_DEVICEINFO_VERSION             0x01
 #define CRSF_DEVICEINFO_PARAMETER_COUNT     0
 
@@ -236,7 +236,7 @@ static bool crsfAccGyroEnabled(void)
 #endif
 }
 
-static uint32_t crsfTelemetryCycltimeUS(void)
+static uint32_t crsfTelemetryCycletimeUS(void)
 {
 #if defined(USE_CRSF_ACCGYRO_TELEMETRY)
     return 1000000U / (uint32_t)(telemetryConfig()->crsf_tlm_rate_hz);
@@ -747,12 +747,8 @@ static void crsfSendMspResponse(uint8_t *payload, const uint8_t payloadSize)
 }
 #endif
 
-static void processCrsf(timeUs_t currentTimeUs)
+static void processCrsf(void)
 {
-    if (!crsfRxIsTelemetryBufEmpty()) {
-        return; // do nothing if telemetry ouptut buffer is not empty yet.
-    }
-
     static uint8_t crsfScheduleIndex = 0;
 
     const uint8_t currentSchedule = crsfSchedule[crsfScheduleIndex];
@@ -788,13 +784,6 @@ static void processCrsf(timeUs_t currentTimeUs)
     if (currentSchedule & BIT(CRSF_FRAME_HEARTBEAT_INDEX)) {
         crsfInitializeFrame(dst);
         crsfFrameHeartbeat(dst);
-        crsfFinalize(dst);
-    }
-#endif
-#ifdef USE_CRSF_ACCGYRO_TELEMETRY
-    if (currentSchedule & BIT(CRSF_FRAME_ACCGYRO_INDEX)) {
-        crsfInitializeFrame(dst);
-        crsfFrameAccGyro(dst, currentTimeUs);
         crsfFinalize(dst);
     }
 #endif
@@ -864,11 +853,9 @@ void initCrsfTelemetry(void)
     }
 #endif
 #if defined(USE_CRSF_V3)
-    if (!crsfAccGyroEnabled()) {    // fast accgyro is a substitute for heartbeats
-        while (index < (crsfTelemetryCycltimeUS() / CRSF_TELEMETRY_FRAME_INTERVAL_MAX_US) && index < CRSF_SCHEDULE_COUNT_MAX) {
-            // schedule heartbeat to ensure that telemetry/heartbeat frames are sent at minimum 50Hz
-            crsfSchedule[index++] = BIT(CRSF_FRAME_HEARTBEAT_INDEX);
-        }
+    while (index < (CRSF_CYCLETIME_US / CRSF_TELEMETRY_FRAME_INTERVAL_MAX_US) && index < CRSF_SCHEDULE_COUNT_MAX) {
+        // schedule heartbeat to ensure that telemetry/heartbeat frames are sent at minimum 50Hz
+        crsfSchedule[index++] = BIT(CRSF_FRAME_HEARTBEAT_INDEX);
     }
 #endif
 
@@ -1020,13 +1007,26 @@ void handleCrsfTelemetry(timeUs_t currentTimeUs)
         }
     }
 #endif
+    if (!crsfRxIsTelemetryBufEmpty()) {
+        return; // do nothing if telemetry ouptut buffer is not empty yet.
+    }
 
     // Actual telemetry data only needs to be sent at a low frequency, ie 10Hz
     // Spread out scheduled frames evenly so each frame is sent at the same frequency.
     // speed up the telemetry rate to that configured if using accgyro data
-    if (currentTimeUs >= crsfLastCycleTime + (crsfTelemetryCycltimeUS() / crsfScheduleCount)) {
+    if (currentTimeUs >= crsfLastCycleTime + CRSF_CYCLETIME_US / crsfScheduleCount) {
+        processCrsf();
+#ifndef USE_CRSF_ACCGYRO_TELEMETRY
         crsfLastCycleTime = currentTimeUs;
-        processCrsf(currentTimeUs);
+#else
+    } else if (currentTimeUs >= crsfLastCycleTime + crsfTelemetryCycletimeUS()) {
+        sbuf_t crsfPayloadBuf;
+        sbuf_t *dst = &crsfPayloadBuf;
+        crsfLastCycleTime = currentTimeUs;
+        crsfInitializeFrame(dst);
+        crsfFrameAccGyro(dst, currentTimeUs);
+        crsfFinalize(dst);
+#endif
     }
 }
 

@@ -51,7 +51,7 @@
 
 #include "telemetry/crsf.h"
 
-#define CRSF_TIME_NEEDED_PER_FRAME_US   1750 // a maximally sized 64byte payload will take ~1550us, round up to 1750.
+#define CRSF_TIME_NEEDED_PER_FRAME_US   1748 // a maximally sized 64byte payload will take ~1550us, round up to 1748.
 #define CRSF_TIME_BETWEEN_FRAMES_US     6667 // At fastest, frames are sent by the transmitter every 6.667 milliseconds, 150 Hz
 
 #define CRSF_DIGITAL_CHANNEL_MIN 172
@@ -73,6 +73,7 @@ static timeUs_t crsfFrameStartAtUs = 0;
 static uint8_t telemetryBuf[CRSF_FRAME_SIZE_MAX];
 static uint8_t telemetryBufLen = 0;
 static float channelScale = CRSF_RC_CHANNEL_SCALE_LEGACY;
+static timeDelta_t frameTimeNeededUs = CRSF_TIME_NEEDED_PER_FRAME_US;
 
 #ifdef USE_RX_LINK_UPLINK_POWER
 #define CRSF_UPLINK_POWER_LEVEL_MW_ITEMS_COUNT 9
@@ -359,7 +360,7 @@ STATIC_UNIT_TESTED void crsfDataReceive(uint16_t c, void *data)
     debug[2] = currentTimeUs - crsfFrameStartAtUs;
 #endif
 
-    if (cmpTimeUs(currentTimeUs, crsfFrameStartAtUs) > CRSF_TIME_NEEDED_PER_FRAME_US) {
+    if (cmpTimeUs(currentTimeUs, crsfFrameStartAtUs) > frameTimeNeededUs) {
         // We've received a character after max time needed to complete a frame,
         // so this must be the start of a new frame.
 #if defined(USE_CRSF_V3)
@@ -669,6 +670,8 @@ void crsfRxUpdateBaudrate(uint32_t baudrate)
 {
     serialSetBaudRate(serialPort, baudrate);
     persistentObjectWrite(PERSISTENT_OBJECT_SERIALRX_BAUD, baudrate);
+    // new frame time
+    frameTimeNeededUs = CRSF_TIME_NEEDED_PER_FRAME_US / (baudrate / CRSF_BAUDRATE);
 }
 
 bool crsfRxUseNegotiatedBaud(void)
