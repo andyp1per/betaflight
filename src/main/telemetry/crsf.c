@@ -82,6 +82,9 @@
 
 static bool crsfTelemetryEnabled;
 static bool deviceInfoReplyPending;
+#if defined(USE_CRSF_V3)
+static bool telemetryResponsePending;
+#endif
 static uint8_t crsfFrame[CRSF_FRAME_SIZE_MAX];
 
 #if defined(USE_MSP_OVER_TELEMETRY)
@@ -796,6 +799,22 @@ void crsfScheduleDeviceInfoResponse(void)
     deviceInfoReplyPending = true;
 }
 
+#if defined(USE_CRSF_V3)
+FAST_CODE void crsfScheduleTelemetryResponse(void)
+{
+    telemetryResponsePending = true;
+}
+
+bool crsfTelemetryUpdateCheck(timeUs_t currentTimeUs, timeDelta_t currentDeltaTimeUs)
+{
+    UNUSED(currentTimeUs);
+    UNUSED(currentDeltaTimeUs);
+
+    return telemetryResponsePending;
+}
+
+#endif
+
 #if defined(USE_CRSF_CMS_TELEMETRY)
 void crsfHandleDeviceInfoResponse(uint8_t *payload)
 {
@@ -826,6 +845,9 @@ void initCrsfTelemetry(void)
     }
 
     deviceInfoReplyPending = false;
+#if defined(USE_CRSF_V3)
+    telemetryResponsePending = false;
+#endif
 #if defined(USE_MSP_OVER_TELEMETRY)
     mspReplyPending = false;
 #endif
@@ -924,6 +946,9 @@ void crsfProcessCommand(uint8_t *frameStart)
 void handleCrsfTelemetry(timeUs_t currentTimeUs)
 {
     static uint32_t crsfLastCycleTime;
+#ifdef USE_CRSF_ACCGYRO_TELEMETRY
+    static uint32_t crsfLastAccGyroCycleTime;
+#endif
 
     if (!crsfTelemetryEnabled) {
         return;
@@ -940,11 +965,20 @@ void handleCrsfTelemetry(timeUs_t currentTimeUs)
     // in between the RX frames.
     crsfRxSendTelemetryData();
 
+#if defined(USE_CRSF_V3)
+    // only send responses on recipt of full frames, this ensures the telemetry rate is never faster
+    // than the frame rate
+    if (!telemetryResponsePending) {
+        return;
+    }
+#endif
+
     // Send ad-hoc response frames as soon as possible
 #if defined(USE_MSP_OVER_TELEMETRY)
     if (mspReplyPending) {
         mspReplyPending = handleCrsfMspFrameBuffer(&crsfSendMspResponse);
         crsfLastCycleTime = currentTimeUs; // reset telemetry timing due to ad-hoc request
+        telemetryResponsePending = false;
         return;
     }
 #endif
@@ -956,6 +990,7 @@ void handleCrsfTelemetry(timeUs_t currentTimeUs)
         crsfFrameDeviceInfo(dst);
         crsfFinalize(dst);
         deviceInfoReplyPending = false;
+        telemetryResponsePending = false;
         crsfLastCycleTime = currentTimeUs; // reset telemetry timing due to ad-hoc request
         return;
     }
@@ -969,6 +1004,7 @@ void handleCrsfTelemetry(timeUs_t currentTimeUs)
         crsfFrameDisplayPortClear(dst);
         crsfFinalize(dst);
         crsfLastCycleTime = currentTimeUs;
+        telemetryResponsePending = false;
         return;
     }
 
@@ -1002,6 +1038,7 @@ void handleCrsfTelemetry(timeUs_t currentTimeUs)
             batchLastTimeUs = currentTimeUs;
 
             crsfLastCycleTime = currentTimeUs;
+            telemetryResponsePending = false;
 
             return;
         }
@@ -1016,13 +1053,14 @@ void handleCrsfTelemetry(timeUs_t currentTimeUs)
     // speed up the telemetry rate to that configured if using accgyro data
     if (currentTimeUs >= crsfLastCycleTime + CRSF_CYCLETIME_US / crsfScheduleCount) {
         processCrsf();
-#ifndef USE_CRSF_ACCGYRO_TELEMETRY
         crsfLastCycleTime = currentTimeUs;
-#else
-    } else if (currentTimeUs >= crsfLastCycleTime + crsfTelemetryCycletimeUS()) {
+        telemetryResponsePending = false;
+#ifdef USE_CRSF_ACCGYRO_TELEMETRY
+    } else if (currentTimeUs >= crsfLastAccGyroCycleTime + crsfTelemetryCycletimeUS()) {
         sbuf_t crsfPayloadBuf;
         sbuf_t *dst = &crsfPayloadBuf;
-        crsfLastCycleTime = currentTimeUs;
+        crsfLastAccGyroCycleTime = currentTimeUs;
+        telemetryResponsePending = false;
         crsfInitializeFrame(dst);
         crsfFrameAccGyro(dst, currentTimeUs);
         crsfFinalize(dst);

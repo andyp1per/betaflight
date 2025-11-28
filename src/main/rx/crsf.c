@@ -49,6 +49,8 @@
 #include "rx/rx.h"
 #include "rx/crsf.h"
 
+#include "fc/tasks.h"
+
 #include "telemetry/crsf.h"
 
 #define CRSF_TIME_NEEDED_PER_FRAME_US   1748 // a maximally sized 64byte payload will take ~1550us, round up to 1748.
@@ -389,6 +391,9 @@ STATIC_UNIT_TESTED void crsfDataReceive(uint16_t c, void *data)
 #if defined(USE_CRSF_V3)
                 crsfFrameErrorCnt = 0;
 #endif
+#if defined(USE_CRSF_V3)
+                crsfScheduleTelemetryResponse();
+#endif
                 switch (crsfFrame.frame.type) {
                 case CRSF_FRAMETYPE_RC_CHANNELS_PACKED:
                 case CRSF_FRAMETYPE_SUBSET_RC_CHANNELS_PACKED:
@@ -672,6 +677,15 @@ void crsfRxUpdateBaudrate(uint32_t baudrate)
     persistentObjectWrite(PERSISTENT_OBJECT_SERIALRX_BAUD, baudrate);
     // new frame time
     frameTimeNeededUs = CRSF_TIME_NEEDED_PER_FRAME_US / (baudrate / CRSF_BAUDRATE);
+#if defined(USE_TELEMETRY_CRSF)
+    task_t* tlmTask = getTask(TASK_TELEMETRY);
+    if (baudrate > CRSF_BAUDRATE) {
+        // switch telemetry task to event drievn
+        tlmTask->attribute->checkFunc = crsfTelemetryUpdateCheck;
+    } else {
+        tlmTask->attribute->checkFunc = NULL;
+    }
+#endif
 }
 
 bool crsfRxUseNegotiatedBaud(void)
