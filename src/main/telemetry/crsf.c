@@ -282,6 +282,105 @@ void crsfFrameGps(sbuf_t *dst)
     sbufWriteU8(dst, gpsSol.numSat);
 }
 
+// Define frame type and size if not already defined in your headers
+#define CRSF_FRAMETYPE_GPS_EXTENDED 0x06
+// Payload: 1+2+2+2+2+2+2+2+2+1+1+1 = 20 bytes
+#define CRSF_FRAME_GPS_EXTENDED_PAYLOAD_SIZE 20
+
+/*
+0x06 GPS Extended
+Payload:
+    uint8_t fix_type;       // Current GPS fix quality
+    int16_t n_speed;        // Northward (north = positive) Speed [cm/sec]
+    int16_t e_speed;        // Eastward (east = positive) Speed [cm/sec]
+    int16_t v_speed;        // Vertical (up = positive) Speed [cm/sec]
+    int16_t h_speed_acc;    // Horizontal Speed accuracy cm/sec
+    int16_t track_acc;      // Heading accuracy in degrees scaled with 1e-1 degrees times 10)
+    int16_t alt_ellipsoid;  // Meters Height above GPS Ellipsoid (not MSL)
+    int16_t h_acc;          // horizontal accuracy in cm
+    int16_t v_acc;          // vertical accuracy in cm
+    uint8_t reserved;
+    uint8_t hDOP;           // Horizontal dilution of precision,Dimensionless in nits of.1.
+    uint8_t vDOP;           // vertical dilution of precision, Dimensionless in nits of .1.
+*/
+void crsfFrameGpsExtended(sbuf_t *dst)
+{
+    // Write Frame Header
+    // Length includes Type (1) + Payload (20) + CRC (1) usually, 
+    // but Cleanflight sbuf logic usually takes Payload Size + Overhead constant.
+    sbufWriteU8(dst, CRSF_FRAME_GPS_EXTENDED_PAYLOAD_SIZE + CRSF_FRAME_LENGTH_TYPE_CRC);
+    sbufWriteU8(dst, CRSF_FRAMETYPE_GPS_EXTENDED);
+
+    // 1. Fix Type
+    // Map existing sats/status to CRSF fix types (0=No Fix, 2=2D, 3=3D)
+    // gpsSol doesn't have an explicit fixType field, so we derive it from satellite count.
+    uint8_t fixType = 0;
+    if (gpsSol.numSat >= 4) {
+        fixType = 3; // 3D Fix
+    } else if (gpsSol.numSat >= 3) {
+        fixType = 2; // 2D Fix
+    }
+    sbufWriteU8(dst, fixType);
+
+    // 2. North/East Speed (cm/s)
+    // gpsSol provides speed in 0.1m/s and course in 0.1 deg.
+    // We must decompose this into N/E components.
+    int16_t n_speed = 0;
+    int16_t e_speed = 0;
+
+    // Only calculate if we have speed
+    if (gpsSol.groundSpeed > 0) {
+        // Convert speed to cm/s (0.1m/s * 10 = cm/s)
+        float speedCmS = (float)gpsSol.groundSpeed * 10.0f;
+        // Convert course (0.1 deg) to radians
+        float courseRad = (float)gpsSol.groundCourse * ((float)M_PI / 1800.0f);
+
+        n_speed = (int16_t)(cosf(courseRad) * speedCmS);
+        e_speed = (int16_t)(sinf(courseRad) * speedCmS);
+    }
+    sbufWriteU16BigEndian(dst, n_speed);
+    sbufWriteU16BigEndian(dst, e_speed);
+
+    // 3. Vertical Speed (cm/s)
+    // gpsSol.llh (gpsLocation_t) does not store vertical velocity. 
+    // Sending 0 as it is unavailable in standard gpsSol struct.
+    int16_t v_speed = 0; 
+    sbufWriteU16BigEndian(dst, v_speed);
+
+    // 4. Horizontal Speed Accuracy (cm/s)
+    // gpsSol.acc.sAcc is in mm/s -> divide by 10 for cm/s
+    sbufWriteU16BigEndian(dst, gpsSol.acc.sAcc / 10);
+
+    // 5. Track/Heading Accuracy
+    // Not available in standard gpsSolutionData_t. Sending 0.
+    sbufWriteU16BigEndian(dst, 0);
+
+    // 6. Ellipsoid Altitude (m)
+    // gpsSol.llh.altCm is in cm -> divide by 100 for meters.
+    // Note: gpsSol altitude is typically MSL. If Ellipsoid is strictly required
+    // and geoid separation is unknown, MSL is the standard fallback.
+    sbufWriteU16BigEndian(dst, gpsSol.llh.altCm / 100);
+
+    // 7. Horizontal Accuracy (cm)
+    // gpsSol.acc.hAcc is in mm -> divide by 10 for cm
+    sbufWriteU16BigEndian(dst, gpsSol.acc.hAcc / 10);
+
+    // 8. Vertical Accuracy (cm)
+    // gpsSol.acc.vAcc is in mm -> divide by 10 for cm
+    sbufWriteU16BigEndian(dst, gpsSol.acc.vAcc / 10);
+
+    // 9. Reserved
+    sbufWriteU8(dst, 0);
+
+    // 10. Horizontal DOP (0.1 units)
+    // gpsSol.dop.hdop is scaled by 100. Divide by 10 to get 0.1 units.
+    sbufWriteU8(dst, gpsSol.dop.hdop / 10);
+
+    // 11. Vertical DOP (0.1 units)
+    // gpsSol.dop.vdop is scaled by 100. Divide by 10 to get 0.1 units.
+    sbufWriteU8(dst, gpsSol.dop.vdop / 10);
+}
+
 /*
 0x08 Battery sensor
 Payload:
@@ -713,6 +812,7 @@ typedef enum {
     CRSF_FRAME_BATTERY_SENSOR_INDEX,
     CRSF_FRAME_FLIGHT_MODE_INDEX,
     CRSF_FRAME_GPS_INDEX,
+    CRSF_FRAME_GPS_EXTENDED_INDEX,
 #ifdef USE_CRSF_ACCGYRO_TELEMETRY
     CRSF_FRAME_ACCGYRO_INDEX,
 #endif
@@ -779,6 +879,11 @@ static void processCrsf(void)
     if (currentSchedule & BIT(CRSF_FRAME_GPS_INDEX)) {
         crsfInitializeFrame(dst);
         crsfFrameGps(dst);
+        crsfFinalize(dst);
+    }
+    if (currentSchedule & BIT(CRSF_FRAME_GPS_EXTENDED_INDEX)) {
+        crsfInitializeFrame(dst);
+        crsfFrameGpsExtended(dst);
         crsfFinalize(dst);
     }
 #endif
@@ -867,6 +972,7 @@ void initCrsfTelemetry(void)
     if (featureIsEnabled(FEATURE_GPS)
        && telemetryIsSensorEnabled(SENSOR_ALTITUDE | SENSOR_LAT_LONG | SENSOR_GROUND_SPEED | SENSOR_HEADING)) {
         crsfSchedule[index++] = BIT(CRSF_FRAME_GPS_INDEX);
+        crsfSchedule[index++] = BIT(CRSF_FRAME_GPS_EXTENDED_INDEX);
     }
 #endif
 #if defined(USE_CRSF_ACCGYRO_TELEMETRY)
