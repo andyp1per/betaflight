@@ -563,14 +563,14 @@ Gyro:  +ve X = roll left
 Payload:
     uint8_t destination;
     uint8_t origin;
-    int32_t gyro_x;             // LSB = INT_MAX/4000 DPS
-    int32_t gyro_y;             // LSB = INT_MAX/4000 DPS
-    int32_t gyro_z;             // LSB = INT_MAX/4000 DPS
-    int32_t acc_x;              // LSB = INT_MAX/32 G
-    int32_t acc_y;              // LSB = INT_MAX/32 G
-    int32_t acc_z;              // LSB = INT_MAX/32 G
-    int16_t gyro_temp;          // C
     uint32_t sample_time;       // Timestamp of the sample in us
+    int16_t gyro_x;             // LSB = INT16_MAX/2000 DPS
+    int16_t gyro_y;             // LSB = INT16_MAX/2000 DPS
+    int16_t gyro_z;             // LSB = INT16_MAX/2000 DPS
+    int16_t acc_x;              // LSB = INT16_MAX/16 G
+    int16_t acc_y;              // LSB = INT16_MAX/16 G
+    int16_t acc_z;              // LSB = INT16_MAX/16 G
+    int16_t gyro_temp;          // C
 */
 void crsfFrameAccGyro(sbuf_t *dst, timeUs_t currentTimeUs)
 {
@@ -586,24 +586,24 @@ void crsfFrameAccGyro(sbuf_t *dst, timeUs_t currentTimeUs)
         accAverage[axis] = accelGetDownsampled(axis) * acc.dev.acc_1G_rec * GRAVITY_EARTH;
     }
 
-// Convert dps 'x' (max 4000) to 16-bit integer (max 32767)
-#define DEGREES_TO_4KDPS16BIT(x) (int32_t)(((float)(x) * INT_MAX) / 4000.0f)
-// Convert acceleration 'x' in m/s^2 (max 32*g) to 16-bit integer (max 32767)
-#define ACCMSS_TO_32G16BIT(x) (int32_t)(((float)(x) * INT_MAX) / (32.0f * GRAVITY_EARTH))
+// Convert dps 'x' (max 2000) to 16-bit integer (max 32767)
+#define DEGREES_TO_2KDPS16BIT(x) (int16_t)(((float)(x) * INT16_MAX) / 2000.0f)
+// Convert acceleration 'x' in m/s^2 (max 16*g) to 16-bit integer (max 32767)
+#define ACCMSS_TO_16G16BIT(x) (int16_t)(((float)(x) * INT16_MAX) / (16.0f * GRAVITY_EARTH))
 
     uint8_t *lengthPtr = sbufPtr(dst);
     sbufWriteU8(dst, 0);
     sbufWriteU8(dst, CRSF_FRAMETYPE_ACCGYRO);
     sbufWriteU8(dst, CRSF_ADDRESS_CRSF_RECEIVER);
     sbufWriteU8(dst, CRSF_ADDRESS_FLIGHT_CONTROLLER);
-    sbufWriteU32BigEndian(dst, DEGREES_TO_4KDPS16BIT(gyroAverage[X]));
-    sbufWriteU32BigEndian(dst, DEGREES_TO_4KDPS16BIT(-gyroAverage[Y]));
-    sbufWriteU32BigEndian(dst, DEGREES_TO_4KDPS16BIT(-gyroAverage[Z]));
-    sbufWriteU32BigEndian(dst, ACCMSS_TO_32G16BIT(accAverage[X]));
-    sbufWriteU32BigEndian(dst, ACCMSS_TO_32G16BIT(-accAverage[Y]));
-    sbufWriteU32BigEndian(dst, ACCMSS_TO_32G16BIT(-accAverage[Z]));
-    sbufWriteU16BigEndian(dst, gyroGetTemperature());
     sbufWriteU32BigEndian(dst, currentTimeUs);
+    sbufWriteU16BigEndian(dst, DEGREES_TO_2KDPS16BIT(gyroAverage[X]));
+    sbufWriteU16BigEndian(dst, DEGREES_TO_2KDPS16BIT(-gyroAverage[Y]));
+    sbufWriteU16BigEndian(dst, DEGREES_TO_2KDPS16BIT(-gyroAverage[Z]));
+    sbufWriteU16BigEndian(dst, ACCMSS_TO_16G16BIT(accAverage[X]));
+    sbufWriteU16BigEndian(dst, ACCMSS_TO_16G16BIT(-accAverage[Y]));
+    sbufWriteU16BigEndian(dst, ACCMSS_TO_16G16BIT(-accAverage[Z]));
+    sbufWriteU16BigEndian(dst, gyroGetTemperature());
     //cliPrintLinef("IMU is at %dC", gyroGetTemperature());
 #define FLOATP(x) (((int)(x*10))/10)
 #define FLOATPR(x) x<0?(((int)(-x*10))%10):(((int)(x*10))%10)
