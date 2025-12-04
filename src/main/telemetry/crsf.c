@@ -63,6 +63,7 @@
 #include "rx/crsf_protocol.h"
 
 #include "sensors/battery.h"
+#include "sensors/barometer.h"
 #include "sensors/sensors.h"
 #include "sensors/acceleration.h"
 #include "sensors/gyro.h"
@@ -282,11 +283,6 @@ void crsfFrameGps(sbuf_t *dst)
     sbufWriteU8(dst, gpsSol.numSat);
 }
 
-// Define frame type and size if not already defined in your headers
-#define CRSF_FRAMETYPE_GPS_EXTENDED 0x06
-// Payload: 1+2+2+2+2+2+2+2+2+1+1+1 = 20 bytes
-#define CRSF_FRAME_GPS_EXTENDED_PAYLOAD_SIZE 20
-
 /*
 0x06 GPS Extended
 Payload:
@@ -379,6 +375,21 @@ void crsfFrameGpsExtended(sbuf_t *dst)
     // 11. Vertical DOP (0.1 units)
     // gpsSol.dop.vdop is scaled by 100. Divide by 10 to get 0.1 units.
     sbufWriteU8(dst, gpsSol.dop.vdop / 10);
+}
+
+/*
+0x02 Baro
+Payload:
+int32_t     pressure pa
+int32_t     temperature
+*/
+void crsfFrameBaro(sbuf_t *dst)
+{
+    // use sbufWrite since CRC does not include frame length
+    sbufWriteU8(dst, CRSF_FRAME_BARO_PAYLOAD_SIZE + CRSF_FRAME_LENGTH_TYPE_CRC);
+    sbufWriteU8(dst, CRSF_FRAMETYPE_BARO);
+    sbufWriteU32BigEndian(dst, baro.temperature); // CRSF and betaflight use same units for degrees
+    sbufWriteU32BigEndian(dst, baro.pressure);
 }
 
 /*
@@ -811,6 +822,7 @@ typedef enum {
     CRSF_FRAME_ATTITUDE_INDEX = CRSF_FRAME_START_INDEX,
     CRSF_FRAME_BATTERY_SENSOR_INDEX,
     CRSF_FRAME_FLIGHT_MODE_INDEX,
+    CRSF_FRAME_BARO_INDEX,
     CRSF_FRAME_GPS_INDEX,
     CRSF_FRAME_GPS_EXTENDED_INDEX,
 #ifdef USE_CRSF_ACCGYRO_TELEMETRY
@@ -873,6 +885,11 @@ static void processCrsf(void)
     if (currentSchedule & BIT(CRSF_FRAME_FLIGHT_MODE_INDEX)) {
         crsfInitializeFrame(dst);
         crsfFrameFlightMode(dst);
+        crsfFinalize(dst);
+    }
+    if (currentSchedule & BIT(CRSF_FRAME_BARO_INDEX)) {
+        crsfInitializeFrame(dst);
+        crsfFrameBaro(dst);
         crsfFinalize(dst);
     }
 #ifdef USE_GPS
@@ -968,6 +985,11 @@ void initCrsfTelemetry(void)
     if (telemetryIsSensorEnabled(SENSOR_MODE)) {
         crsfSchedule[index++] = BIT(CRSF_FRAME_FLIGHT_MODE_INDEX);
     }
+#ifdef USE_BARO
+    if (sensors(SENSOR_BARO)) {
+        crsfSchedule[index++] = BIT(CRSF_FRAME_BARO_INDEX);
+    }
+#endif
 #ifdef USE_GPS
     if (featureIsEnabled(FEATURE_GPS)
        && telemetryIsSensorEnabled(SENSOR_ALTITUDE | SENSOR_LAT_LONG | SENSOR_GROUND_SPEED | SENSOR_HEADING)) {
@@ -1203,9 +1225,15 @@ int getCrsfFrame(uint8_t *frame, crsfFrameType_e frameType)
     case CRSF_FRAMETYPE_FLIGHT_MODE:
         crsfFrameFlightMode(sbuf);
         break;
+    case CRSF_FRAMETYPE_BARO:
+        crsfFrameBaro(sbuf);
+        break;
 #if defined(USE_GPS)
     case CRSF_FRAMETYPE_GPS:
         crsfFrameGps(sbuf);
+        break;
+    case CRSF_FRAMETYPE_GPS_EXTENDED:
+        crsfFrameGpsExtended(sbuf);
         break;
 #endif
 #if defined(USE_MSP_OVER_TELEMETRY)
