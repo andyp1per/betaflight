@@ -87,6 +87,7 @@ static bool deviceInfoReplyPending;
 static bool telemetryResponsePending;
 #endif
 static uint8_t crsfFrame[CRSF_FRAME_SIZE_MAX];
+static uint32_t lastGpsSolnTime;
 
 #if defined(USE_MSP_OVER_TELEMETRY)
 typedef struct mspBuffer_s {
@@ -276,11 +277,41 @@ void crsfFrameGps(sbuf_t *dst)
     sbufWriteU8(dst, CRSF_FRAMETYPE_GPS);
     sbufWriteU32BigEndian(dst, gpsSol.llh.lat); // CRSF and betaflight use same units for degrees
     sbufWriteU32BigEndian(dst, gpsSol.llh.lon);
-    sbufWriteU16BigEndian(dst, (gpsSol.groundSpeed * 36 + 50) / 100); // gpsSol.groundSpeed is in cm/s
+    sbufWriteU16BigEndian(dst, gpsSol.groundSpeed * 36); // gpsSol.groundSpeed is in 0.1m/s
     sbufWriteU16BigEndian(dst, gpsSol.groundCourse * 10); // gpsSol.groundCourse is degrees * 10
-    const uint16_t altitude = (constrain(getEstimatedAltitudeCm(), 0 * 100, 5000 * 100) / 100) + 1000; // constrain altitude from 0 to 5,000m
-    sbufWriteU16BigEndian(dst, altitude);
+    sbufWriteU16BigEndian(dst, constrain(gpsSol.llh.altCm / 100 + 1000, 0, 5000)); // constrain altitude from 0 to 5,000m
     sbufWriteU8(dst, gpsSol.numSat);
+}
+
+/*
+0x03 GPS Time
+Payload:
+    int16_t year;
+    uint8_t month;
+    uint8_t day;
+    uint8_t hour;
+    uint8_t minute;
+    uint8_t second;
+    uint16_t millisecond;
+*/
+void crsfFrameGpsTime(sbuf_t *dst)
+{
+    sbufWriteU8(dst, CRSF_FRAME_GPS_TIME_PAYLOAD_SIZE + CRSF_FRAME_LENGTH_TYPE_CRC);
+    sbufWriteU8(dst, CRSF_FRAMETYPE_GPS_TIME);
+
+    dateTime_t dt;
+    memset(&dt, 0, sizeof(dateTime_t));
+#ifdef USE_RTC_TIME
+    // Attempt to get the current date and time from the RTC
+    rtcGetDateTime(&dt);
+#endif
+    sbufWriteU16BigEndian(dst, (int16_t)dt.year);
+    sbufWriteU8(dst, dt.month);
+    sbufWriteU8(dst, dt.day);
+    sbufWriteU8(dst, dt.hours);
+    sbufWriteU8(dst, dt.minutes);
+    sbufWriteU8(dst, dt.seconds);
+    sbufWriteU16BigEndian(dst, dt.millis);
 }
 
 /*
@@ -308,15 +339,22 @@ void crsfFrameGpsExtended(sbuf_t *dst)
     sbufWriteU8(dst, CRSF_FRAMETYPE_GPS_EXTENDED);
 
     // 1. Fix Type
-    // Map existing sats/status to CRSF fix types (0=No Fix, 2=2D, 3=3D)
+    // Map existing sats/status to CRSF fix types (1=No Fix, 2=2D, 3=3D)
     // gpsSol doesn't have an explicit fixType field, so we derive it from satellite count.
-    uint8_t fixType = 0;
-    if (gpsSol.numSat >= 4) {
-        fixType = 3; // 3D Fix
-    } else if (gpsSol.numSat >= 3) {
-        fixType = 2; // 2D Fix
+    uint8_t gpsFixType = 0;
+
+    if (!STATE(GPS_FIX)) {
+        gpsFixType = 1;
     }
-    sbufWriteU8(dst, fixType);
+    else {
+        if (gpsSol.numSat < GPS_MIN_SAT_COUNT) {
+            gpsFixType = 2;
+        }
+        else {
+            gpsFixType = 3;
+        }
+    }
+    sbufWriteU8(dst, gpsFixType);
 
     // 2. North/East Speed (cm/s)
     // gpsSol provides speed in 0.1m/s and course in 0.1 deg.
@@ -824,6 +862,7 @@ typedef enum {
     CRSF_FRAME_FLIGHT_MODE_INDEX,
     CRSF_FRAME_BARO_INDEX,
     CRSF_FRAME_GPS_INDEX,
+    CRSF_FRAME_GPS_TIME_INDEX,
     CRSF_FRAME_GPS_EXTENDED_INDEX,
 #ifdef USE_CRSF_ACCGYRO_TELEMETRY
     CRSF_FRAME_ACCGYRO_INDEX,
@@ -833,7 +872,8 @@ typedef enum {
 } crsfFrameTypeIndex_e;
 
 static uint8_t crsfScheduleCount;
-static uint8_t crsfSchedule[CRSF_SCHEDULE_COUNT_MAX];
+static uint16_t crsfSchedule[CRSF_SCHEDULE_COUNT_MAX];
+static uint16_t crsfTimedSchedule;
 
 #if defined(USE_MSP_OVER_TELEMETRY)
 
@@ -862,14 +902,44 @@ static void crsfSendMspResponse(uint8_t *payload, const uint8_t payloadSize)
 }
 #endif
 
-static void processCrsf(void)
+static bool processCrsf(uint32_t currentTimeUs, uint32_t crsfLastCycleTime)
 {
-    static uint8_t crsfScheduleIndex = 0;
-
-    const uint8_t currentSchedule = crsfSchedule[crsfScheduleIndex];
-
     sbuf_t crsfPayloadBuf;
     sbuf_t *dst = &crsfPayloadBuf;
+
+#ifdef USE_GPS
+    if (crsfTimedSchedule & BIT(CRSF_FRAME_GPS_TIME_INDEX) && gpsSol.time > lastGpsSolnTime) {
+        crsfInitializeFrame(dst);
+        crsfFrameGpsTime(dst);
+        crsfFinalize(dst);
+        crsfTimedSchedule &= ~BIT(CRSF_FRAME_GPS_TIME_INDEX);
+        return true;
+    }
+
+    if (crsfTimedSchedule & BIT(CRSF_FRAME_GPS_EXTENDED_INDEX) && gpsSol.time > lastGpsSolnTime) {
+        crsfInitializeFrame(dst);
+        crsfFrameGpsExtended(dst);
+        crsfFinalize(dst);
+        crsfTimedSchedule &= ~BIT(CRSF_FRAME_GPS_EXTENDED_INDEX);    // tick-tock between GPS frames
+        return true;
+    }
+
+    if (crsfTimedSchedule & BIT(CRSF_FRAME_GPS_INDEX) && gpsSol.time > lastGpsSolnTime) {
+        crsfInitializeFrame(dst);
+        crsfFrameGps(dst);
+        crsfFinalize(dst);
+        crsfTimedSchedule |= (BIT(CRSF_FRAME_GPS_EXTENDED_INDEX) | BIT(CRSF_FRAME_GPS_TIME_INDEX));
+        lastGpsSolnTime = gpsSol.time;
+        return true;
+    }
+#endif
+
+    if (currentTimeUs < crsfLastCycleTime + CRSF_CYCLETIME_US / crsfScheduleCount) {
+        return false;
+    }
+
+    static uint8_t crsfScheduleIndex = 0;
+    const uint16_t currentSchedule = crsfSchedule[crsfScheduleIndex];
 
     if (currentSchedule & BIT(CRSF_FRAME_ATTITUDE_INDEX)) {
         crsfInitializeFrame(dst);
@@ -898,11 +968,6 @@ static void processCrsf(void)
         crsfFrameGps(dst);
         crsfFinalize(dst);
     }
-    if (currentSchedule & BIT(CRSF_FRAME_GPS_EXTENDED_INDEX)) {
-        crsfInitializeFrame(dst);
-        crsfFrameGpsExtended(dst);
-        crsfFinalize(dst);
-    }
 #endif
 
 #if defined(USE_CRSF_V3)
@@ -914,6 +979,8 @@ static void processCrsf(void)
 #endif
 
     crsfScheduleIndex = (crsfScheduleIndex + 1) % crsfScheduleCount;
+
+    return true;
 }
 
 void crsfScheduleDeviceInfoResponse(void)
@@ -993,13 +1060,12 @@ void initCrsfTelemetry(void)
 #ifdef USE_GPS
     if (featureIsEnabled(FEATURE_GPS)
        && telemetryIsSensorEnabled(SENSOR_ALTITUDE | SENSOR_LAT_LONG | SENSOR_GROUND_SPEED | SENSOR_HEADING)) {
-        crsfSchedule[index++] = BIT(CRSF_FRAME_GPS_INDEX);
-        crsfSchedule[index++] = BIT(CRSF_FRAME_GPS_EXTENDED_INDEX);
+        crsfTimedSchedule |= (BIT(CRSF_FRAME_GPS_INDEX) | BIT(CRSF_FRAME_GPS_TIME_INDEX) | BIT(CRSF_FRAME_GPS_EXTENDED_INDEX));
     }
 #endif
 #if defined(USE_CRSF_ACCGYRO_TELEMETRY)
     if (crsfAccGyroEnabled() && (sensors(SENSOR_ACC) || sensors(SENSOR_GYRO))) {
-        crsfSchedule[index++] = BIT(CRSF_FRAME_ACCGYRO_INDEX);
+        crsfTimedSchedule |= BIT(CRSF_FRAME_ACCGYRO_INDEX);
     }
 #endif
 #if defined(USE_CRSF_V3)
@@ -1179,8 +1245,7 @@ void handleCrsfTelemetry(timeUs_t currentTimeUs)
     // Actual telemetry data only needs to be sent at a low frequency, ie 10Hz
     // Spread out scheduled frames evenly so each frame is sent at the same frequency.
     // speed up the telemetry rate to that configured if using accgyro data
-    if (currentTimeUs >= crsfLastCycleTime + CRSF_CYCLETIME_US / crsfScheduleCount) {
-        processCrsf();
+    if (processCrsf(currentTimeUs, crsfLastCycleTime)) {
         crsfLastCycleTime = currentTimeUs;
         telemetryResponsePending = false;
 #ifdef USE_CRSF_ACCGYRO_TELEMETRY
