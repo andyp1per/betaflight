@@ -277,7 +277,7 @@ void crsfFrameGps(sbuf_t *dst)
     sbufWriteU8(dst, CRSF_FRAMETYPE_GPS);
     sbufWriteU32BigEndian(dst, gpsSol.llh.lat); // CRSF and betaflight use same units for degrees
     sbufWriteU32BigEndian(dst, gpsSol.llh.lon);
-    sbufWriteU16BigEndian(dst, gpsSol.groundSpeed * 36); // gpsSol.groundSpeed is in 0.1m/s
+    sbufWriteU16BigEndian(dst, gpsSol.groundSpeed * 0.36); // gpsSol.groundSpeed is in cm/s
     sbufWriteU16BigEndian(dst, gpsSol.groundCourse * 10); // gpsSol.groundCourse is degrees * 10
     sbufWriteU16BigEndian(dst, constrain(gpsSol.llh.altCm / 100 + 1000, 0, 5000)); // constrain altitude from 0 to 5,000m
     sbufWriteU8(dst, gpsSol.numSat);
@@ -356,38 +356,16 @@ void crsfFrameGpsExtended(sbuf_t *dst)
     }
     sbufWriteU8(dst, gpsFixType);
 
-    // 2. North/East Speed (cm/s)
-    // gpsSol provides speed in 0.1m/s and course in 0.1 deg.
-    // We must decompose this into N/E components.
-    int16_t n_speed = 0;
-    int16_t e_speed = 0;
-
-    // Only calculate if we have speed
-    if (gpsSol.groundSpeed > 0) {
-        // Convert speed to cm/s (0.1m/s * 10 = cm/s)
-        float speedCmS = (float)gpsSol.groundSpeed * 10.0f;
-        // Convert course (0.1 deg) to radians
-        float courseRad = (float)gpsSol.groundCourse * ((float)M_PI / 1800.0f);
-
-        n_speed = (int16_t)(cosf(courseRad) * speedCmS);
-        e_speed = (int16_t)(sinf(courseRad) * speedCmS);
-    }
-    sbufWriteU16BigEndian(dst, n_speed);
-    sbufWriteU16BigEndian(dst, e_speed);
-
-    // 3. Vertical Speed (cm/s)
-    // gpsSol.llh (gpsLocation_t) does not store vertical velocity. 
-    // Sending 0 as it is unavailable in standard gpsSol struct.
-    int16_t v_speed = 0; 
-    sbufWriteU16BigEndian(dst, v_speed);
+    sbufWriteU16BigEndian(dst, gpsSol.speed.north);
+    sbufWriteU16BigEndian(dst, gpsSol.speed.east);
+    sbufWriteU16BigEndian(dst, -gpsSol.speed.down);
 
     // 4. Horizontal Speed Accuracy (cm/s)
     // gpsSol.acc.sAcc is in mm/s -> divide by 10 for cm/s
     sbufWriteU16BigEndian(dst, gpsSol.acc.sAcc / 10);
 
     // 5. Track/Heading Accuracy
-    // Not available in standard gpsSolutionData_t. Sending 0.
-    sbufWriteU16BigEndian(dst, 0);
+    sbufWriteU16BigEndian(dst, gpsSol.acc.headAcc / 10);
 
     // 6. Ellipsoid Altitude (m)
     // gpsSol.llh.altCm is in cm -> divide by 100 for meters.
