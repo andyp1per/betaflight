@@ -840,14 +840,18 @@ typedef enum {
     CRSF_FRAME_FLIGHT_MODE_INDEX,
     CRSF_FRAME_BARO_INDEX,
     CRSF_FRAME_GPS_INDEX,
+    CRSF_FRAME_HEARTBEAT_INDEX,
+    CRSF_SCHEDULE_COUNT_MAX
+} crsfFrameTypeIndex_e;
+
+typedef enum {
     CRSF_FRAME_GPS_TIME_INDEX,
     CRSF_FRAME_GPS_EXTENDED_INDEX,
 #ifdef USE_CRSF_ACCGYRO_TELEMETRY
     CRSF_FRAME_ACCGYRO_INDEX,
 #endif
-    CRSF_FRAME_HEARTBEAT_INDEX,
-    CRSF_SCHEDULE_COUNT_MAX
-} crsfFrameTypeIndex_e;
+    CRSF_TIMED_SCHEDULE_COUNT_MAX
+} crsfTimedFrameTypeIndex_e;
 
 static uint8_t crsfScheduleCount;
 static uint16_t crsfSchedule[CRSF_SCHEDULE_COUNT_MAX];
@@ -886,27 +890,29 @@ static bool processCrsf(uint32_t currentTimeUs, uint32_t crsfLastCycleTime)
     sbuf_t *dst = &crsfPayloadBuf;
 
 #ifdef USE_GPS
-    if (crsfTimedSchedule & BIT(CRSF_FRAME_GPS_TIME_INDEX) && gpsSol.time > lastGpsSolnTime) {
+#if defined(USE_CRSF_V3)
+    if (isCrsfV3Running && crsfTimedSchedule & BIT(CRSF_FRAME_GPS_TIME_INDEX) && gpsSol.time > lastGpsSolnTime) {
         crsfInitializeFrame(dst);
         crsfFrameGpsTime(dst);
         crsfFinalize(dst);
         crsfTimedSchedule &= ~BIT(CRSF_FRAME_GPS_TIME_INDEX);
         return true;
     }
-
-    if (crsfTimedSchedule & BIT(CRSF_FRAME_GPS_EXTENDED_INDEX) && gpsSol.time > lastGpsSolnTime) {
+    if (isCrsfV3Running && crsfTimedSchedule & BIT(CRSF_FRAME_GPS_EXTENDED_INDEX) && gpsSol.time > lastGpsSolnTime) {
         crsfInitializeFrame(dst);
         crsfFrameGpsExtended(dst);
         crsfFinalize(dst);
         crsfTimedSchedule &= ~BIT(CRSF_FRAME_GPS_EXTENDED_INDEX);    // tick-tock between GPS frames
         return true;
     }
-
+#endif
     if (crsfTimedSchedule & BIT(CRSF_FRAME_GPS_INDEX) && gpsSol.time > lastGpsSolnTime) {
         crsfInitializeFrame(dst);
         crsfFrameGps(dst);
         crsfFinalize(dst);
-        crsfTimedSchedule |= (BIT(CRSF_FRAME_GPS_EXTENDED_INDEX) | BIT(CRSF_FRAME_GPS_TIME_INDEX));
+        if (isCrsfV3Running) {
+            crsfTimedSchedule |= (BIT(CRSF_FRAME_GPS_EXTENDED_INDEX) | BIT(CRSF_FRAME_GPS_TIME_INDEX));
+        }
         lastGpsSolnTime = gpsSol.time;
         return true;
     }
@@ -1038,18 +1044,24 @@ void initCrsfTelemetry(void)
 #ifdef USE_GPS
     if (featureIsEnabled(FEATURE_GPS)
        && telemetryIsSensorEnabled(SENSOR_ALTITUDE | SENSOR_LAT_LONG | SENSOR_GROUND_SPEED | SENSOR_HEADING)) {
-        crsfTimedSchedule |= (BIT(CRSF_FRAME_GPS_INDEX) | BIT(CRSF_FRAME_GPS_TIME_INDEX) | BIT(CRSF_FRAME_GPS_EXTENDED_INDEX));
+#ifdef USE_CRSF_V3
+        crsfTimedSchedule |= BIT(CRSF_FRAME_GPS_INDEX) | BIT(CRSF_FRAME_GPS_TIME_INDEX) | BIT(CRSF_FRAME_GPS_EXTENDED_INDEX);
+#else
+        crsfSchedule[index++] = BIT(CRSF_FRAME_GPS_INDEX);
+#endif
     }
 #endif
-#if defined(USE_CRSF_ACCGYRO_TELEMETRY)
+#if defined(USE_CRSF_ACCGYRO_TELEMETRY) && defined(USE_CRSF_V3)
     if (crsfAccGyroEnabled() && (sensors(SENSOR_ACC) || sensors(SENSOR_GYRO))) {
         crsfTimedSchedule |= BIT(CRSF_FRAME_ACCGYRO_INDEX);
     }
 #endif
 #if defined(USE_CRSF_V3)
-    while (index < (CRSF_CYCLETIME_US / CRSF_TELEMETRY_FRAME_INTERVAL_MAX_US) && index < CRSF_SCHEDULE_COUNT_MAX) {
-        // schedule heartbeat to ensure that telemetry/heartbeat frames are sent at minimum 50Hz
-        crsfSchedule[index++] = BIT(CRSF_FRAME_HEARTBEAT_INDEX);
+    if (!(crsfTimedSchedule & BIT(CRSF_FRAME_ACCGYRO_INDEX))) {
+        while (index < (CRSF_CYCLETIME_US / CRSF_TELEMETRY_FRAME_INTERVAL_MAX_US) && index < CRSF_SCHEDULE_COUNT_MAX) {
+            // schedule heartbeat to ensure that telemetry/heartbeat frames are sent at minimum 50Hz
+            crsfSchedule[index++] = BIT(CRSF_FRAME_HEARTBEAT_INDEX);
+        }
     }
 #endif
 
