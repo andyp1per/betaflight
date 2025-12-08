@@ -404,8 +404,8 @@ void crsfFrameBaro(sbuf_t *dst)
     // use sbufWrite since CRC does not include frame length
     sbufWriteU8(dst, CRSF_FRAME_BARO_PAYLOAD_SIZE + CRSF_FRAME_LENGTH_TYPE_CRC);
     sbufWriteU8(dst, CRSF_FRAMETYPE_BARO);
-    sbufWriteU32BigEndian(dst, baro.temperature); // CRSF and betaflight use same units for degrees
     sbufWriteU32BigEndian(dst, baro.pressure);
+    sbufWriteU32BigEndian(dst, baro.temperature); // CRSF and betaflight use same units for degrees
 }
 
 /*
