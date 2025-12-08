@@ -42,6 +42,7 @@ typedef enum {
     CRSF_FRAMETYPE_HEARTBEAT = 0x0B,
     CRSF_FRAMETYPE_BARO = 0x11,
     CRSF_FRAMETYPE_MAG = 0x12,
+    CRSF_FRAMETYPE_ACCGYRO = 0x13,    // full resolution IMU frames
     CRSF_FRAMETYPE_LINK_STATISTICS = 0x14,
     CRSF_FRAMETYPE_RC_CHANNELS_PACKED = 0x16,
     CRSF_FRAMETYPE_SUBSET_RC_CHANNELS_PACKED = 0x17,
@@ -56,8 +57,6 @@ typedef enum {
     CRSF_FRAMETYPE_PARAMETER_READ = 0x2C,
     CRSF_FRAMETYPE_PARAMETER_WRITE = 0x2D,
     CRSF_FRAMETYPE_COMMAND = 0x32,
-    // full resolution IMU frames
-    CRSF_FRAMETYPE_ACCGYRO = 0x41,
     // MSP commands
     CRSF_FRAMETYPE_MSP_REQ = 0x7A,   // response request using msp sequence as command
     CRSF_FRAMETYPE_MSP_RESP = 0x7B,  // reply with 58 byte chunked binary
