@@ -240,14 +240,22 @@ typedef struct gpsAccuracy_s {
     uint32_t hAcc;                  // horizontal accuracy in mm
     uint32_t vAcc;                  // vertical accuracy in mm
     uint32_t sAcc;                  // speed accuracy in mm/s
+    uint32_t headAcc;               // heading accuracy
 } gpsAccuracy_t;
+
+typedef struct gpsSpeed_s {
+    int32_t north;                  // speed north in cm/s
+    int32_t east;                   // speed east in cm/s
+    int32_t down;                   // speed down in cm/s
+} gpsSpeed_t;
 
 typedef struct gpsSolutionData_s {
     gpsLocation_t llh;
     gpsDilution_t dop;
     gpsAccuracy_t acc;
-    uint16_t speed3d;               // speed in 0.1m/s
-    uint16_t groundSpeed;           // speed in 0.1m/s
+    gpsSpeed_t speed;
+    uint16_t speed3d;               // speed in cm/s
+    uint16_t groundSpeed;           // speed in cm/s
     uint16_t groundCourse;          // degrees * 10
     uint8_t numSat;
     uint32_t time;                  // GPS msToW
