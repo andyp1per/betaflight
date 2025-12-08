@@ -697,7 +697,7 @@ void speedNegotiationProcess(timeUs_t currentTimeUs)
 
 #if defined(USE_CRSF_ACCGYRO_TELEMETRY)
 /*
-0x41 AccGyro in NEU bodyframe, samples are raw data averaged over the sample interval
+0x13 AccGyro in NEU bodyframe, samples are raw data averaged over the sample interval
 Accel: +ve X = foward
        +ve Y = right
        +ve Z = up
