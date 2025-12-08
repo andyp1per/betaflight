@@ -394,10 +394,10 @@ void crsfFrameGpsExtended(sbuf_t *dst)
 }
 
 /*
-0x10 Baro
+0x11 Baro
 Payload:
 int32_t     pressure pa
-int32_t     temperature
+int32_t     temperature centidegrees
 */
 void crsfFrameBaro(sbuf_t *dst)
 {
