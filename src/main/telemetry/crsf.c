@@ -64,6 +64,7 @@
 
 #include "sensors/battery.h"
 #include "sensors/barometer.h"
+#include "sensors/compass.h"
 #include "sensors/sensors.h"
 #include "sensors/acceleration.h"
 #include "sensors/gyro.h"
@@ -406,6 +407,23 @@ void crsfFrameBaro(sbuf_t *dst)
     sbufWriteU8(dst, CRSF_FRAMETYPE_BARO);
     sbufWriteU32BigEndian(dst, baro.pressure);
     sbufWriteU32BigEndian(dst, baro.temperature); // CRSF and betaflight use same units for degrees
+}
+
+/*
+0x12 Mag
+Payload:
+int16_t     field x mgauss * 3
+int16_t     field y mgauss * 3
+int16_t     field z mgauss * 3
+*/
+void crsfFrameMag(sbuf_t *dst)
+{
+    // use sbufWrite since CRC does not include frame length
+    sbufWriteU8(dst, CRSF_FRAME_MAG_PAYLOAD_SIZE + CRSF_FRAME_LENGTH_TYPE_CRC);
+    sbufWriteU8(dst, CRSF_FRAMETYPE_MAG);
+    sbufWriteU16BigEndian(dst, (int16_t)(mag.magADC[X] * 3.0f));
+    sbufWriteU16BigEndian(dst, (int16_t)(mag.magADC[Y] * 3.0f));
+    sbufWriteU16BigEndian(dst, (int16_t)(mag.magADC[Z] * 3.0f));
 }
 
 /*
@@ -839,6 +857,7 @@ typedef enum {
     CRSF_FRAME_BATTERY_SENSOR_INDEX,
     CRSF_FRAME_FLIGHT_MODE_INDEX,
     CRSF_FRAME_BARO_INDEX,
+    CRSF_FRAME_MAG_INDEX,
     CRSF_FRAME_GPS_INDEX,
     CRSF_FRAME_HEARTBEAT_INDEX,
     CRSF_SCHEDULE_COUNT_MAX
@@ -941,11 +960,20 @@ static bool processCrsf(uint32_t currentTimeUs, uint32_t crsfLastCycleTime)
         crsfFrameFlightMode(dst);
         crsfFinalize(dst);
     }
+#if defined(USE_BARO)
     if (currentSchedule & BIT(CRSF_FRAME_BARO_INDEX)) {
         crsfInitializeFrame(dst);
         crsfFrameBaro(dst);
         crsfFinalize(dst);
     }
+#endif
+#if defined(USE_MAG)
+    if (currentSchedule & BIT(CRSF_FRAME_MAG_INDEX)) {
+        crsfInitializeFrame(dst);
+        crsfFrameMag(dst);
+        crsfFinalize(dst);
+    }
+#endif
 #ifdef USE_GPS
     if (currentSchedule & BIT(CRSF_FRAME_GPS_INDEX)) {
         crsfInitializeFrame(dst);
@@ -1039,6 +1067,11 @@ void initCrsfTelemetry(void)
 #ifdef USE_BARO
     if (sensors(SENSOR_BARO)) {
         crsfSchedule[index++] = BIT(CRSF_FRAME_BARO_INDEX);
+    }
+#endif
+#if defined(USE_MAG)
+    if (sensors(SENSOR_MAG)) {
+        crsfSchedule[index++] = BIT(CRSF_FRAME_MAG_INDEX);
     }
 #endif
 #ifdef USE_GPS
@@ -1283,6 +1316,11 @@ int getCrsfFrame(uint8_t *frame, crsfFrameType_e frameType)
     case CRSF_FRAMETYPE_BARO:
         crsfFrameBaro(sbuf);
         break;
+#if defined(USE_MAG)
+    case CRSF_FRAMETYPE_MAG:
+        crsfFrameMag(sbuf);
+        break;
+#endif
 #if defined(USE_GPS)
     case CRSF_FRAMETYPE_GPS:
         crsfFrameGps(sbuf);
