@@ -705,8 +705,6 @@ Gyro:  +ve X = roll left
        +ve Y = pitch up
        +ve Z = yaw clockwise
 Payload:
-    uint8_t destination;
-    uint8_t origin;
     uint32_t sample_time;       // Timestamp of the sample in us
     int16_t gyro_x;             // LSB = INT16_MAX/2000 DPS
     int16_t gyro_y;             // LSB = INT16_MAX/2000 DPS
@@ -714,7 +712,7 @@ Payload:
     int16_t acc_x;              // LSB = INT16_MAX/16 G
     int16_t acc_y;              // LSB = INT16_MAX/16 G
     int16_t acc_z;              // LSB = INT16_MAX/16 G
-    int16_t gyro_temp;          // C
+    int16_t gyro_temp;          // C * 100
 */
 void crsfFrameAccGyro(sbuf_t *dst, timeUs_t currentTimeUs)
 {
@@ -738,8 +736,6 @@ void crsfFrameAccGyro(sbuf_t *dst, timeUs_t currentTimeUs)
     uint8_t *lengthPtr = sbufPtr(dst);
     sbufWriteU8(dst, 0);
     sbufWriteU8(dst, CRSF_FRAMETYPE_ACCGYRO);
-    sbufWriteU8(dst, CRSF_ADDRESS_CRSF_RECEIVER);
-    sbufWriteU8(dst, CRSF_ADDRESS_FLIGHT_CONTROLLER);
     sbufWriteU32BigEndian(dst, currentTimeUs);
     sbufWriteU16BigEndian(dst, DEGREES_TO_2KDPS16BIT(gyroAverage[X]));
     sbufWriteU16BigEndian(dst, DEGREES_TO_2KDPS16BIT(-gyroAverage[Y]));
@@ -747,7 +743,7 @@ void crsfFrameAccGyro(sbuf_t *dst, timeUs_t currentTimeUs)
     sbufWriteU16BigEndian(dst, ACCMSS_TO_16G16BIT(accAverage[X]));
     sbufWriteU16BigEndian(dst, ACCMSS_TO_16G16BIT(-accAverage[Y]));
     sbufWriteU16BigEndian(dst, ACCMSS_TO_16G16BIT(-accAverage[Z]));
-    sbufWriteU16BigEndian(dst, gyroGetTemperature());
+    sbufWriteU16BigEndian(dst, gyroGetTemperature() * 100);
     //cliPrintLinef("IMU is at %dC", gyroGetTemperature());
 #define FLOATP(x) (((int)(x*10))/10)
 #define FLOATPR(x) x<0?(((int)(-x*10))%10):(((int)(x*10))%10)
