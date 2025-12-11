@@ -89,6 +89,7 @@ static bool telemetryResponsePending;
 #endif
 static uint8_t crsfFrame[CRSF_FRAME_SIZE_MAX];
 static uint32_t lastGpsSolnTime;
+static uint32_t lastBaroTime;
 
 #if defined(USE_MSP_OVER_TELEMETRY)
 typedef struct mspBuffer_s {
@@ -241,16 +242,6 @@ static bool crsfAccGyroEnabled(void)
     return false;
 #endif
 }
-
-static uint32_t crsfTelemetryCycletimeUS(void)
-{
-#if defined(USE_CRSF_ACCGYRO_TELEMETRY)
-    return 1000000U / (uint32_t)(telemetryConfig()->crsf_tlm_rate_hz);
-#else
-    return CRSF_CYCLETIME_US;
-#endif
-}
-
 
 /*
 CRSF frame has the structure:
@@ -852,7 +843,6 @@ typedef enum {
     CRSF_FRAME_ATTITUDE_INDEX = CRSF_FRAME_START_INDEX,
     CRSF_FRAME_BATTERY_SENSOR_INDEX,
     CRSF_FRAME_FLIGHT_MODE_INDEX,
-    CRSF_FRAME_BARO_INDEX,
     CRSF_FRAME_MAG_INDEX,
     CRSF_FRAME_GPS_INDEX,
     CRSF_FRAME_HEARTBEAT_INDEX,
@@ -862,6 +852,7 @@ typedef enum {
 typedef enum {
     CRSF_FRAME_GPS_TIME_INDEX,
     CRSF_FRAME_GPS_EXTENDED_INDEX,
+    CRSF_FRAME_BARO_INDEX,
 #ifdef USE_CRSF_ACCGYRO_TELEMETRY
     CRSF_FRAME_ACCGYRO_INDEX,
 #endif
@@ -930,6 +921,14 @@ static bool processCrsf(uint32_t currentTimeUs, uint32_t crsfLastCycleTime)
         }
         lastGpsSolnTime = gpsSol.time;
         return true;
+    }
+#endif
+#if defined(USE_BARO)
+    if (crsfTimedSchedule & BIT(CRSF_FRAME_BARO_INDEX) && currentTimeUs > lastBaroTime + 100000U) { // 10Hz baro update
+        crsfInitializeFrame(dst);
+        crsfFrameBaro(dst);
+        crsfFinalize(dst);
+        lastBaroTime = currentTimeUs;
     }
 #endif
 
@@ -1062,7 +1061,11 @@ void initCrsfTelemetry(void)
     }
 #ifdef USE_BARO
     if (sensors(SENSOR_BARO)) {
+#ifdef USE_CRSF_V3
+        crsfTimedSchedule |= BIT(CRSF_FRAME_BARO_INDEX);
+#else
         crsfSchedule[index++] = BIT(CRSF_FRAME_BARO_INDEX);
+#endif
     }
 #endif
 #if defined(USE_MAG)
@@ -1159,9 +1162,6 @@ void crsfProcessCommand(uint8_t *frameStart)
 void handleCrsfTelemetry(timeUs_t currentTimeUs)
 {
     static uint32_t crsfLastCycleTime;
-#ifdef USE_CRSF_ACCGYRO_TELEMETRY
-    static uint32_t crsfLastAccGyroCycleTime;
-#endif
 
     if (!crsfTelemetryEnabled) {
         return;
@@ -1266,18 +1266,16 @@ void handleCrsfTelemetry(timeUs_t currentTimeUs)
     // speed up the telemetry rate to that configured if using accgyro data
     if (processCrsf(currentTimeUs, crsfLastCycleTime)) {
         crsfLastCycleTime = currentTimeUs;
-        telemetryResponsePending = false;
 #ifdef USE_CRSF_ACCGYRO_TELEMETRY
-    } else if (currentTimeUs >= crsfLastAccGyroCycleTime + crsfTelemetryCycletimeUS()) {
+    } else if (crsfAccGyroEnabled()) {  // let the inbound request rate dictate the outbound rate
         sbuf_t crsfPayloadBuf;
         sbuf_t *dst = &crsfPayloadBuf;
-        crsfLastAccGyroCycleTime = currentTimeUs;
-        telemetryResponsePending = false;
         crsfInitializeFrame(dst);
         crsfFrameAccGyro(dst, currentTimeUs);
         crsfFinalize(dst);
 #endif
     }
+    telemetryResponsePending = false;
 }
 
 #if defined(UNIT_TEST) || defined(USE_RX_EXPRESSLRS)
