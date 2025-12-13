@@ -104,8 +104,10 @@ float accelGetDownsampled(int axis)
 
 void accelStartDownsampledCycle(void)
 {
-    downSampleCount = 0;
-    downSampleSum[X] = downSampleSum[Y] = downSampleSum[Z] = 0;
+    downSampleCount = 1;
+    downSampleSum[X] = acc.accADC[X];
+    downSampleSum[Y] = acc.accADC[Y];
+    downSampleSum[Z] = acc.accADC[Z];
 }
 #endif
 

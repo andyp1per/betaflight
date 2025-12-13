@@ -567,8 +567,10 @@ float gyroGetDownsampled(int axis)
 
 void gyroStartDownsampledCycle(void)
 {
-    downSampleCount = 0;
-    downSampleSum[X] = downSampleSum[Y] = downSampleSum[Z] = 0;
+    downSampleSum[X] = gyro.gyroADC[X];
+    downSampleSum[Y] = gyro.gyroADC[Y];
+    downSampleSum[Z] = gyro.gyroADC[Z];
+    downSampleCount = 1;
 }
 #endif
 
