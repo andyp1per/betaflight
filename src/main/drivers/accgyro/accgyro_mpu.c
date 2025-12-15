@@ -327,6 +327,8 @@ bool mpuGyroReadSPI(gyroDev_t *gyro)
         gyro->gyroADCRaw[X] = __builtin_bswap16(gyroData[gyroDataIndex]);
         gyro->gyroADCRaw[Y] = __builtin_bswap16(gyroData[gyroDataIndex + 1]);
         gyro->gyroADCRaw[Z] = __builtin_bswap16(gyroData[gyroDataIndex + 2]);
+        // temperature was read as well, so populate it
+        gyro->temperature = (int16_t)(((int16_t)__builtin_bswap16(gyroData[gyroDataIndex-2])) * gyro->tempScale + gyro->tempZero);
         break;
     }
 

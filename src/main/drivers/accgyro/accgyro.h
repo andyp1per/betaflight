@@ -107,6 +107,8 @@ typedef struct gyroDev_s {
     int32_t gyroADCRawPrevious[XYZ_AXIS_COUNT];
     int16_t gyroADCRaw[XYZ_AXIS_COUNT];                      // raw data from sensor
     int16_t temperature;
+    float tempScale;
+    float tempZero;
     mpuDetectionResult_t mpuDetectionResult;
     sensor_align_e gyroAlign;
     gyroRateKHz_e gyroRateKHz;
