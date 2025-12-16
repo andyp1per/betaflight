@@ -132,6 +132,8 @@ typedef struct gyroDev_s {
     uint16_t accSampleRateHz;
     uint8_t accDataReg;
     uint8_t gyroDataReg;
+    uint8_t tempDataReg;
+    uint8_t dmaReadRegStart;
 } gyroDev_t;
 
 typedef struct accDev_s {

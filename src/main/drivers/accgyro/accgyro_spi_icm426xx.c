@@ -93,6 +93,7 @@
 
 #define ICM426XX_RA_GYRO_DATA_X1                    0x25  // User Bank 0
 #define ICM426XX_RA_ACCEL_DATA_X1                   0x1F  // User Bank 0
+#define ICM426XX_RA_TEMP_DATA1                      0x1D  // User Bank 0
 
 #define ICM426XX_RA_INT_CONFIG                      0x14  // User Bank 0
 #define ICM426XX_INT1_MODE_PULSED                   (0 << 2)
@@ -249,6 +250,8 @@ void icm426xxGyroInit(gyroDev_t *gyro)
     mpuGyroInit(gyro);
     gyro->accDataReg = ICM426XX_RA_ACCEL_DATA_X1;
     gyro->gyroDataReg = ICM426XX_RA_GYRO_DATA_X1;
+    gyro->tempDataReg = ICM426XX_RA_TEMP_DATA1;
+    gyro->dmaReadRegStart = gyro->tempDataReg;
 
     // Turn off ACC and GYRO so they can be configured
     // See section 12.9 in ICM-42688-P datasheet v1.7
@@ -314,6 +317,9 @@ void icm426xxGyroInit(gyroDev_t *gyro)
     STATIC_ASSERT(INV_FSR_16G == 3, "INV_FSR_16G must be 3 to generate correct value");
     spiWriteReg(dev, ICM426XX_RA_ACCEL_CONFIG0, (3 - INV_FSR_16G) << 5 | (odrConfig & 0x0F));
     delay(15);
+
+    gyro->tempScale = 1.0f / 2.07f;
+    gyro->tempZero = 25.0f;
 }
 
 bool icm426xxSpiGyroDetect(gyroDev_t *gyro)
