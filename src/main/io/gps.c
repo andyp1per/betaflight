@@ -2187,6 +2187,9 @@ static bool UBLOX_parse_gps(void)
 #endif
         gpsSol.speed3d = ubxRcvMsgPayload.ubxNavVelned.speed_3d / 10;       // mm/s -> cm/s
         gpsSol.groundSpeed = ubxRcvMsgPayload.ubxNavVelned.speed_2d / 10;    // mm/s -> cm/s
+        gpsSol.speed.north = ubxRcvMsgPayload.ubxNavVelned.ned_north / 10;  // mm/s -> cm/s
+        gpsSol.speed.east = ubxRcvMsgPayload.ubxNavVelned.ned_east / 10;   // mm/s -> cm/s
+        gpsSol.speed.down = ubxRcvMsgPayload.ubxNavVelned.ned_down /10;   // mm/s -> cm/s
         gpsSol.groundCourse = (uint16_t) (ubxRcvMsgPayload.ubxNavVelned.heading_2d / 10000);     // Heading 2D deg * 100000 rescaled to deg * 10
         ubxHaveNewSpeed = true;
         break;
@@ -2206,10 +2209,15 @@ static bool UBLOX_parse_gps(void)
         gpsSol.acc.hAcc = ubxRcvMsgPayload.ubxNavPvt.hAcc;
         gpsSol.acc.vAcc = ubxRcvMsgPayload.ubxNavPvt.vAcc;
         gpsSol.acc.sAcc = ubxRcvMsgPayload.ubxNavPvt.sAcc;
+        gpsSol.acc.headAcc = ubxRcvMsgPayload.ubxNavPvt.headAcc;
         gpsSol.speed3d = (uint16_t) sqrtf(powf(ubxRcvMsgPayload.ubxNavPvt.gSpeed / 10, 2.0f) + powf(ubxRcvMsgPayload.ubxNavPvt.velD / 10, 2.0f)); // mm/s -> cm/s
         gpsSol.groundSpeed = ubxRcvMsgPayload.ubxNavPvt.gSpeed / 10;    // mm/s -> cm/s
+        gpsSol.speed.north = ubxRcvMsgPayload.ubxNavPvt.velN / 10;   // mm/s -> cm/s
+        gpsSol.speed.east = ubxRcvMsgPayload.ubxNavPvt.velE / 10;   // mm/s -> cm/s
+        gpsSol.speed.down = ubxRcvMsgPayload.ubxNavPvt.velD / 10;   // mm/s -> cm/s
         gpsSol.groundCourse = (uint16_t) (ubxRcvMsgPayload.ubxNavPvt.headMot / 10000);     // Heading 2D deg * 100000 rescaled to deg * 10
-        gpsSol.dop.pdop = ubxRcvMsgPayload.ubxNavPvt.pDOP;
+        gpsSol.dop.hdop = gpsSol.dop.vdop = gpsSol.dop.pdop = ubxRcvMsgPayload.ubxNavPvt.pDOP;  // since the DOP message will have been switched off
+
         ubxHaveNewSpeed = true;
 #ifdef USE_RTC_TIME
         //set clock, when gps time is available
