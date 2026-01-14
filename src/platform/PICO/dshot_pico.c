@@ -152,15 +152,35 @@ static void dshotUpdateComplete(void)
     pio_set_sm_mask_enabled(dshotPio, motorMask, false);
 
     if (useDshotTelemetry) {
-        // protect against SM getting stuck waiting for telemetry.
-        // TODO we could be more sophisticated about detecting that we are not stuck,
-        // then skipping the restart, to avoid unnecessary delays in the PIO code.
-        pio_restart_sm_mask(dshotPio, motorMask);
+        // The bidir PIO program waits indefinitely for ESC response in wait_low.
+        // If ESC doesn't respond, SM gets stuck. However, we must not clear the
+        // RX FIFO if it contains valid telemetry from previous frames.
+        //
+        // With DShot600 bidir timing:
+        // - Transmit: ~107µs, Turnaround: ~30µs, Receive: ~112µs = ~250µs total
+        // - At 8kHz loop, telemetry from frame N arrives during frame N+2
+        //
+        // Strategy: Check if SM is stuck by looking at its PC. If stuck in wait_low,
+        // restart it. Otherwise let it run - telemetry will be collected on next decode.
         for (int motorIndex = 0; motorIndex < dshotMotorCount; ++motorIndex) {
             if (outgoingPacket[motorIndex] >= 0) {
                 const motorOutput_t *motor = &dshotMotors[motorIndex];
-                pio_sm_clear_fifos(motor->pio, motor->pio_sm);
-                pio_sm_exec_wait_blocking(motor->pio, motor->pio_sm, pio_encode_jmp(motor->offset));
+                // Check program counter - wait_low position depends on program variant
+                // Non-debug: offset+17, Debug: offset+18
+                uint pc = pio_sm_get_pc(motor->pio, motor->pio_sm);
+#ifdef DSHOT_DEBUG_PIO
+                uint waitLowPc = motor->offset + 18;
+#else
+                uint waitLowPc = motor->offset + 17;
+#endif
+                if (pc == waitLowPc) {
+                    // SM is stuck waiting for ESC response - restart it
+                    pio_sm_restart(motor->pio, motor->pio_sm);
+                    pio_sm_clear_fifos(motor->pio, motor->pio_sm);
+                    pio_sm_exec_wait_blocking(motor->pio, motor->pio_sm, pio_encode_jmp(motor->offset));
+                }
+                // If SM is elsewhere, it's either transmitting, receiving, or waiting
+                // for next frame. Don't disturb it - telemetry will arrive.
             }
         }
     }
