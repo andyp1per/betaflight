@@ -796,8 +796,17 @@ Payload:
     int16_t acc_z;              // LSB = INT16_MAX/16 G
     int16_t gyro_temp;          // C * 100
 */
-void crsfFrameAccGyro(sbuf_t *dst, timeUs_t currentTimeUs)
+bool crsfFrameAccGyro(sbuf_t *dst, timeUs_t currentTimeUs)
 {
+    // Capture any pending gyro samples into snapshot
+    const bool hasNewGyroData = gyroStartDownsampledCycle();
+
+    // Only send if we have gyro data
+    if (!hasNewGyroData) {
+        return false;
+    }
+
+    // Read gyro data from snapshot
     float gyroAverage[XYZ_AXIS_COUNT];
     for (int axis = 0; axis < XYZ_AXIS_COUNT; ++axis) {
         gyroAverage[axis] = gyroGetDownsampled(axis);
@@ -805,6 +814,8 @@ void crsfFrameAccGyro(sbuf_t *dst, timeUs_t currentTimeUs)
 
 #define GRAVITY_EARTH (9.80665f)
 
+    // Capture accel if available, use previous snapshot if not
+    accelStartDownsampledCycle();
     float accAverage[XYZ_AXIS_COUNT];
     for (int axis = 0; axis < XYZ_AXIS_COUNT; ++axis) {
         accAverage[axis] = accelGetDownsampled(axis) * acc.dev.acc_1G_rec * GRAVITY_EARTH;
@@ -826,16 +837,9 @@ void crsfFrameAccGyro(sbuf_t *dst, timeUs_t currentTimeUs)
     sbufWriteU16BigEndian(dst, ACCMSS_TO_16G16BIT(-accAverage[Y]));
     sbufWriteU16BigEndian(dst, ACCMSS_TO_16G16BIT(-accAverage[Z]));
     sbufWriteU16BigEndian(dst, gyroGetTemperature() * 100);
-    //cliPrintLinef("IMU is at %dC", gyroGetTemperature());
-#define FLOATP(x) (((int)(x*10))/10)
-#define FLOATPR(x) x<0?(((int)(-x*10))%10):(((int)(x*10))%10)
-    //cliPrintLinef("IMU Gyr: %d.%d %d.%d %d.%d, Acc: %d.%d %d.%d %d.%d",
-    //    FLOATP(gyroAverage[X]), FLOATPR(gyroAverage[X]), FLOATP(gyroAverage[Y]), FLOATPR(gyroAverage[Y]), FLOATP(gyroAverage[Z]), FLOATPR(gyroAverage[Z]),
-    //    FLOATP(accAverage[X]), FLOATPR(accAverage[X]), FLOATP(accAverage[Y]), FLOATPR(accAverage[Y]), FLOATP(accAverage[Z]), FLOATPR(accAverage[Z]));
     *lengthPtr = sbufPtr(dst) - lengthPtr;
 
-    gyroStartDownsampledCycle();
-    accelStartDownsampledCycle();
+    return true;
 }
 #endif
 
@@ -1404,8 +1408,9 @@ void handleCrsfTelemetry(timeUs_t currentTimeUs)
         sbuf_t crsfPayloadBuf;
         sbuf_t *dst = &crsfPayloadBuf;
         crsfInitializeFrame(dst);
-        crsfFrameAccGyro(dst, currentTimeUs);
-        crsfFinalize(dst);
+        if (crsfFrameAccGyro(dst, currentTimeUs)) {
+            crsfFinalize(dst);
+        }
 #endif
     }
 #if defined(USE_CRSF_V3)
