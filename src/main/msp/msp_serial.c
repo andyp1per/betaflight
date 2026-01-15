@@ -458,16 +458,21 @@ static void mspProcessPendingRequest(mspPort_t * mspPort)
 
 #ifdef USE_CLI
     case MSP_PENDING_CLI:
-        mspPort->pendingRequest = MSP_PENDING_NONE;
-        mspPort->portState = PORT_CLI_ACTIVE;
-
-        cliEnter(mspPort->port, true);
+        cliEnter(mspPort, true);
         break;
+#ifdef USE_CLI_DEBUG_PRINT
+    case MSP_PENDING_CLI_DEBUG:
+        cliEnter(mspPort, false);
+        break;
+#endif
 #endif
 
     default:
         break;
     }
+
+    // Reset pending request after processing
+    mspPort->pendingRequest = MSP_PENDING_NONE;
 }
 
 static void mspSerialProcessReceivedReply(mspPort_t *msp, mspProcessReplyFnPtr mspProcessReplyFn)
@@ -530,13 +535,11 @@ void mspSerialProcess(mspEvaluateNonMspData_e evaluateNonMspData, mspProcessComm
 
         // whilst port is idle, poll incoming until portState changes or no more bytes
         while (mspPort->portState == PORT_IDLE && serialRxBytesWaiting(mspPort->port)) {
-
-            // There are bytes incoming - abort pending request
             mspPort->lastActivityMs = millis();
-            mspPort->pendingRequest = MSP_PENDING_NONE;
 
             const uint8_t c = serialRead(mspPort->port);
             if (c == '$') {
+                mspPort->pendingRequest = MSP_PENDING_NONE;
                 mspPort->portState = PORT_MSP_PACKET;
                 mspPort->packetState = MSP_HEADER_START;
             } else if ((evaluateNonMspData == MSP_EVALUATE_NON_MSP_DATA)
@@ -549,13 +552,12 @@ void mspSerialProcess(mspEvaluateNonMspData_e evaluateNonMspData, mspProcessComm
                 if (c == serialConfig()->reboot_character) {
                     mspPort->pendingRequest = MSP_PENDING_BOOTLOADER_ROM;
 #ifdef USE_CLI
-                } else if (c == '#') {
-                    mspPort->pendingRequest = MSP_PENDING_CLI;
-                } else if (c == 0x2) {
-                    mspPort->portState = PORT_CLI_CMD;
-                    cliEnter(mspPort->port, false);
+                } else if (c == '#' || c == '@') {
+                    mspPort->pendingRequest = (c == '#') ? MSP_PENDING_CLI : MSP_PENDING_CLI_DEBUG;
 #endif
                 }
+                // Note: unknown characters don't reset pendingRequest, allowing '#' or '@'
+                // to work even if followed by \r\n
             }
         }
 
@@ -566,15 +568,6 @@ void mspSerialProcess(mspEvaluateNonMspData_e evaluateNonMspData, mspProcessComm
         case PORT_MSP_PACKET:
             mspProcessPacket(mspPort, mspProcessCommandFn, mspProcessReplyFn);
             break;
-#ifdef USE_CLI
-        case PORT_CLI_ACTIVE:
-        case PORT_CLI_CMD:
-            if (!cliProcess()) {
-                mspPort->portState = PORT_IDLE;
-            }
-            break;
-#endif
-
         default:
             break;
         }
@@ -612,8 +605,7 @@ int mspSerialPush(serialPortIdentifier_e port, uint8_t cmd, uint8_t *data, int d
 #ifndef USE_MSP_PUSH_OVER_VCP
             || mspPort->port->identifier == SERIAL_PORT_USB_VCP
 #endif
-            || (port != SERIAL_PORT_ALL && mspPort->port->identifier != port)
-            || mspPort->portState == PORT_CLI_CMD || mspPort->portState == PORT_CLI_ACTIVE) {
+            || (port != SERIAL_PORT_ALL && mspPort->port->identifier != port)) {
             continue;
         }
 
