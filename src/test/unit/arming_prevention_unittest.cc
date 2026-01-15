@@ -24,6 +24,8 @@ extern "C" {
 
     #include "build/debug.h"
 
+    #include "cli/cli.h"
+
     #include "common/filter.h"
     #include "common/maths.h"
 
@@ -83,7 +85,7 @@ extern "C" {
 
     float rcData[MAX_SUPPORTED_RC_CHANNEL_COUNT];
     uint16_t averageSystemLoadPercent = 0;
-    uint8_t cliMode = 0;
+    cliMode_e cliMode = CLI_MODE_OFF;
     uint8_t debugMode = 0;
     int16_t debug[DEBUG16_VALUE_COUNT];
     pidProfile_t *currentPidProfile;

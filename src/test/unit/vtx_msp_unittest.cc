@@ -23,6 +23,8 @@
 extern "C" {
     #include "platform.h"
 
+    #include "cli/cli.h"
+
     #include "io/vtx.h"
     #include "io/vtx_msp.h"
     #include "pg/vtx_table.h"
@@ -94,7 +96,7 @@ extern "C" {
     uint8_t debugMode = 0;
     int16_t debug[DEBUG16_VALUE_COUNT];
 
-    uint8_t cliMode = 0;
+    cliMode_e cliMode = CLI_MODE_OFF;
     rxRuntimeState_t rxRuntimeState = rxRuntimeState_t();
     static serialPortConfig_t *findSerialPortConfig_stub_retval;
 
