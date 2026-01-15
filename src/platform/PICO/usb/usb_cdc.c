@@ -131,7 +131,14 @@ int cdc_usb_write(const uint8_t *buf, unsigned length)
         return -1;
     }
 
-    if (cdc_usb_connected()) {
+#ifdef USE_CLI_DEBUG_PRINT
+    // Skip DTR check to allow writing to terminals that don't set DTR
+    const bool shouldWrite = true;
+#else
+    const bool shouldWrite = cdc_usb_connected();
+#endif
+
+    if (shouldWrite) {
         for (unsigned i = 0; i < length;) {
             unsigned n = length - i;
             uint32_t avail = tud_cdc_write_available();
@@ -146,7 +153,11 @@ int cdc_usb_write(const uint8_t *buf, unsigned length)
             } else {
                 tud_task();
                 tud_cdc_write_flush();
+#ifdef USE_CLI_DEBUG_PRINT
+                if (!tud_cdc_write_available() && time_us_64() > last_avail_time + CDC_USB_WRITE_TIMEOUT_US) {
+#else
                 if (!cdc_usb_connected() || (!tud_cdc_write_available() && time_us_64() > last_avail_time + CDC_USB_WRITE_TIMEOUT_US)) {
+#endif
                     break;
                 }
             }
@@ -181,6 +192,22 @@ int cdc_usb_read(uint8_t *buf, unsigned length)
     // tud_task will complete running and we will check the right values the next time.
     //
     int rc = PICO_ERROR_NO_DATA;
+#ifdef USE_CLI_DEBUG_PRINT
+    // Skip DTR check to allow reading from terminals that don't set DTR
+    if (tud_cdc_available()) {
+        if (!mutex_try_enter_block_until(&cdc_usb_mutex, make_timeout_time_ms(CDC_DEADLOCK_TIMEOUT_MS))) {
+            return PICO_ERROR_NO_DATA; // would deadlock otherwise
+        }
+        if (tud_cdc_available()) {
+            uint32_t count = tud_cdc_read(buf, length);
+            rc = count ? (int)count : PICO_ERROR_NO_DATA;
+        } else {
+            // because our mutex use may starve out the background task, run tud_task here (we own the mutex)
+            tud_task();
+        }
+        mutex_exit(&cdc_usb_mutex);
+    }
+#else
     if (cdc_usb_connected() && tud_cdc_available()) {
         if (!mutex_try_enter_block_until(&cdc_usb_mutex, make_timeout_time_ms(CDC_DEADLOCK_TIMEOUT_MS))) {
             return PICO_ERROR_NO_DATA; // would deadlock otherwise
@@ -194,6 +221,7 @@ int cdc_usb_read(uint8_t *buf, unsigned length)
         }
         mutex_exit(&cdc_usb_mutex);
     }
+#endif
     return rc;
 }
 
