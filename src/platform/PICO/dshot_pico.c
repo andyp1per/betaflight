@@ -165,19 +165,16 @@ static void dshotUpdateComplete(void)
         for (int motorIndex = 0; motorIndex < dshotMotorCount; ++motorIndex) {
             if (outgoingPacket[motorIndex] >= 0) {
                 const motorOutput_t *motor = &dshotMotors[motorIndex];
-                // Check program counter - wait_low position depends on program variant
-                // Non-debug: offset+17, Debug: offset+18
+                // Check program counter - wait_low is at offset+18 in edge detection bidir program
                 uint pc = pio_sm_get_pc(motor->pio, motor->pio_sm);
-#ifdef DSHOT_DEBUG_PIO
                 uint waitLowPc = motor->offset + 18;
-#else
-                uint waitLowPc = motor->offset + 17;
-#endif
                 if (pc == waitLowPc) {
                     // SM is stuck waiting for ESC response - restart it
+                    // Jump to start (offset+BIDIR_START) to skip receive logic
                     pio_sm_restart(motor->pio, motor->pio_sm);
                     pio_sm_clear_fifos(motor->pio, motor->pio_sm);
-                    pio_sm_exec_wait_blocking(motor->pio, motor->pio_sm, pio_encode_jmp(motor->offset));
+                    pio_sm_exec_wait_blocking(motor->pio, motor->pio_sm,
+                        pio_encode_jmp(motor->offset + dshot_600_bidir_BIDIR_START));
                 }
                 // If SM is elsewhere, it's either transmitting, receiving, or waiting
                 // for next frame. Don't disturb it - telemetry will arrive.

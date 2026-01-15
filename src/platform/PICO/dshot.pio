@@ -2,33 +2,6 @@
 ; Copyright (c) TODO
 ;
 
-; DSHOT protocol rate (150, 300, 600) is dynamic
-; DSHOT bidir / not bidir is compiled in
-; For rate, could have separate programs ready to load in (maybe easiest)
-;  or could have effectively dynamic based on contents of x register if spare, which can be
-; set with pio_sm_exec_wait_blocking
-; For >4 motors, could configure pin with disable, config set, enable, [but run out of time in gyro loop? might need another PIO for more SMs]
-;
-
-; presumably BF writes dshot async, at max of ~10k/sec or so (typical aiming for 8k loop for gyro)
-; dshot frame takes approx. 0.1ms dshot150 or dshot300_bidir
-; so hopefully never going to be overflowing the tx fifo (but could happen with 150bidir and be close with 150, 300bidir)
-
-
-; programs dshot_150, dshot_300, dshot_600, dshot_bidir_150, dshot_bidir_300, dshot_bidir_600
-;
-; All programs, bit width = 40 cycles, clock set accordingly
-; Min delay between frames of 2us, number of cycles varies according to program
-
-; DSHOT 600
-; 1 bit ~ 1.667us, 2us ~ 48 cycles. Allow say 56 cycles between frames
-;
-; * could get rid of nop by adding delays to 2x jmp !osre, bitloop
-; * maybe get rid of discard by writing 16-bit word (dupllicated to top 16 bits), and osre empty after 16 bits
-;
-; could be simpler to let the PIO "bitbang" bytes of 11111100 or 11100000 (which have the correct ratios
-; of 6:2 and 3:5 to represent 1 and 0). The 4-word TX fifo has enough space (4x32 bits = 16 bytes) for the 16 dshot bits required.
-
 .program dshot_600
 start:
     set    pins, 0                [31]      ; Set pin low [assumed pin already set for output]
@@ -38,128 +11,73 @@ start:
 bitloop:
     out    y, 1                             ; Shift next bit into y
     jmp    !y, outzero                      ;
-    set    pins, 1                [26]      ; To output a '1' bit, set high for 27 then low for 13 (based on bitlength = 40 cycles)
+    set    pins, 1                [26]      ; To output a '1' bit, set high for 27 then low for 13
     set    pins, 0                [9]       ; Delay to next "set" adds up to 13
-    jmp    !osre, bitloop                   ; If not done output (finished shifting bits) then loop
+    jmp    !osre, bitloop                   ; If not done output then loop
     jmp    start
 outzero:
     set    pins, 1                [12]      ; To output a '0', set high for 13 then low for 27
     set    pins, 0                [22]      ; Delay to next "set" adds up to 27
-    jmp    !osre, bitloop         [1]       ; If not done output (finished shifting bits) then loop else wrap to start
+    jmp    !osre, bitloop         [1]       ; If not done output then loop
 
 
-
-; DSHOT 600 bidir
-; 1 output bit ~ 1.667us = 40 PIO cycles
-; 1 PIO cycle is ~ 0.042us = 6.25 sys clock cycles (at 150MHz)
-; NB output levels are inverted compared to DSHOT (bidir uses inverted signal)
+; DSHOT 600 bidir with edge detection receive
+; Transmit: 14 instructions (2-15)
+; Receive: 16 instructions (16-31, plus 0-1 for bit check/push)
+; Total: 32 instructions (exactly at PIO limit)
 ;
-; Receive uses edge detection approach (ported from pico-bidir-dshot by bastian2001)
-; instead of fixed-delay 3x oversampling. This is more robust to ESC timing variations.
-; - No fixed delay before receive - just wait for pin to go LOW (start of response)
-; - Measure pulse widths: short pulse (~16 cycles) = 0, long pulse (~32 cycles) = 1
-; - Self-synchronizing - works regardless of ESC response delay
-; - Outputs 21 bits directly (no 3x oversampling needed)
-;
-; Receive bit rate is 5/4 times output rate, so 32 PIO cycles per receive bit
-
-.program dshot_600_bidir_debug
-.side_set 1
-start:
-    set    pindirs, 1     side 0            ; Set pins for output
-    set    pins, 1        side 0  [15]      ; Set pin high (idle state for bidir)
-    nop                   side 0  [15]      ; min delay 2us at DSHOT600 is 48 cycles, allow 52 before next set
-    nop                   side 0  [15]
-    pull   block          side 1            ; Block until someone puts something into the TX FIFO
-    out    y, 16          side 0            ; Discard top 16 bits
-bitloop:
-    out    y, 1           side 0            ; Shift next bit into y
-    jmp    !y, outzero    side 0            ;
-outone:
-    set    pins, 0        side 0  [12]      ; To output a '1' bit, set low for 27 then high for 13
-    nop                   side 0  [13]
-    set    pins, 1        side 0  [9]       ; Delay to next "set" adds up to 13
-    jmp    !osre, bitloop side 0            ; If not done output then loop
-    jmp    receive        side 0
-outzero:
-    set    pins, 0        side 0  [12]      ; To output a '0', set low for 13 then high for 27
-    set    pins, 1        side 0  [15]      ; Delay to next "set" adds up to 27
-    jmp    !osre, bitloop side 0  [8]       ; If not done output then loop
-receive:
-    ; Fixed-interval sampling receive (debug version with side-set)
-    ; At 5/4x receive rate: ~30 PIO cycles per bit (1.26µs at DShot600)
-    set    pindirs, 0     side 0            ; Switch to input (1 cycle)
-    set    x, 20          side 0            ; Read 21 bits (1 cycle)
-wait_low:
-    jmp    pin, wait_low  side 1            ; Wait for pin to go LOW (start of response)
-    ; Wait ~half bit period (15 cycles) to center sampling
-    set    y, 12          side 0  [1]       ; 2 cycles, then 13 iterations below
-half_bit:
-    jmp    y--, half_bit  side 0            ; 1 cycle × 13 = 13 cycles. Total = 15
-sample_loop:
-    in     pins, 1        side 0            ; Sample pin directly into ISR (1 cycle)
-    set    y, 6           side 0  [6]       ; 7 cycles (1 + 6 delay)
-bit_delay:
-    jmp    y--, bit_delay side 0  [2]       ; 3 cycles × 7 iterations = 21 cycles
-    jmp    x--, sample_loop side 0          ; 1 cycle. Total = 1+7+21+1 = 30 cycles
-    push   noblock        side 1            ; Done - push 21 bits to RX FIFO
-    jmp    start          side 0            ; Restart for next frame
-.wrap_target
-    nop                   side 0            ; Wrap target (unused, but required)
-.wrap
-
-
+; Key insight: wrap_target at next_bit (instruction 0) so both bit paths converge:
+; - After 'in null, 1' (0 bit): explicit jmp to next_bit
+; - After 'in osr, 1' (1 bit): .wrap to next_bit
+; On init/restart, jump to offset+2 (start label) to skip receive logic.
 
 .program dshot_600_bidir
-start:
-    set    pindirs, 1                       ; Set pins for output
-    set    pins, 1                [30]      ; Set pin high (idle state for bidir)
-    nop                           [20]      ; min delay 2us at DSHOT600 is 48 cycles, allow 56 before next set
-    pull   block                            ; Block until someone puts something into the TX FIFO
-    out    y, 16                            ; Discard top 16 bits
-bitloop:
-    out    y, 1                             ; Shift next bit into y
-    jmp    !y, outzero                      ;
-outone:
-    set    pins, 0                [26]      ; To output a '1' bit, set low for 27 then high for 13
-    set    pins, 1                [9]       ; Delay to next "set" adds up to 13
-    jmp    !osre, bitloop                   ; If not done output then loop
-    jmp    receive
-outzero:
-    set    pins, 0                [12]      ; To output a '0', set low for 13 then high for 27
-    set    pins, 1                [22]      ; Delay to next "set" adds up to 27
-    jmp    !osre, bitloop         [1]       ; If not done output then loop
-    nop                                     ; line up timings vs. arriving at receive from outone
-receive:
-    ; Fixed-interval sampling receive
-    ; At 5/4x receive rate: ~30 PIO cycles per bit (1.26µs at DShot600)
-    ; Sample in the middle of each bit period for reliability
-    set    pindirs, 0                       ; Switch to input (1 cycle)
-    set    x, 20                            ; Read 21 bits (1 cycle)
-wait_low:
-    jmp    pin, wait_low                    ; Wait for pin to go LOW (start of response)
-    ; Now at start of first bit - wait ~half bit period (15 cycles) to center sampling
-    set    y, 12              [1]           ; 2 cycles, then 13 iterations below
-half_bit:
-    jmp    y--, half_bit                    ; 1 cycle × 13 = 13 cycles. Total = 15
-sample_loop:
-    in     pins, 1                          ; Sample pin directly into ISR (1 cycle)
-    set    y, 6               [6]           ; 7 cycles (1 + 6 delay)
-bit_delay:
-    jmp    y--, bit_delay     [2]           ; 3 cycles × 7 iterations = 21 cycles
-    jmp    x--, sample_loop                 ; 1 cycle. Total = 1+7+21+1 = 30 cycles
-    push   noblock                          ; Done - push 21 bits to RX FIFO
-    jmp    start                            ; Restart for next frame
-.wrap_target
-    nop                                     ; Wrap target (unused, but required)
-.wrap
 
-; pio_sm-restart
-; This method clears the ISR, shift counters, clock divider counter pin write flags, delay counter, latched EXEC instruction, and IRQ wait condition.
-;     hw_set_bits(&pio->ctrl, 1u << (PIO_CTRL_SM_RESTART_LSB + sm));
-; Specifically, the following are cleared: input and output shift counters; the
-; contents of the input shift register; the delay counter; the waiting-on-IRQ state;
-; any stalled instruction written to SMx_INSTR or run by OUT/MOV EXEC; any
-; pin write left asserted due to OUT_STICKY.
-;
-; - doesn't reset PC!
+.define public BIDIR_START 2    ; Offset to 'start' label for init/restart
+
+.wrap_target
+next_bit:
+    jmp    x--, cont                        ; 0: More bits to read?
+    push   noblock                          ; 1: Done - push telemetry to FIFO
+start:
+    set    pindirs, 1                       ; 2: Set output mode
+    set    pins, 1                          ; 3: Idle high
+    pull   block                            ; 4: Wait for TX data
+    out    y, 16                            ; 5: Discard top 16 bits
+bitloop:
+    out    y, 1                             ; 6: Shift next bit into y
+    jmp    !y, outzero                      ; 7: Branch based on bit value
+outone:
+    set    pins, 0                [26]      ; 8: '1' bit = LOW for 27, HIGH for 13
+    set    pins, 1                [9]       ; 9:
+    jmp    !osre, bitloop                   ; 10: Loop for all bits
+    jmp    receive                          ; 11: Done transmitting
+outzero:
+    set    pins, 0                [12]      ; 12: '0' bit = LOW for 13, HIGH for 27
+    set    pins, 1                [22]      ; 13:
+    jmp    !osre, bitloop         [1]       ; 14: Loop for all bits (fall through when done)
+receive:
+    set    pindirs, 0                       ; 15: Switch to input
+    set    x, 19                            ; 16: Read 20 bits (start bit consumed by wait)
+    mov    osr, ~null                       ; 17: OSR = 0xFFFFFFFF for shifting in 1s
+wait_low:
+    jmp    pin, wait_low          [1]       ; 18: Wait for pin LOW (start of response)
+    set    y, 6                             ; 19: Half-bit count for initial LOW measurement
+meas_zero:
+    jmp    pin, new_one                     ; 20: Pin went HIGH? -> measure HIGH
+    jmp    y--, meas_zero                   ; 21: Keep counting while LOW
+    in     null, 1                          ; 22: Timeout while LOW = 0 bit
+    jmp    next_bit                         ; 23: Check if more bits (explicit jump)
+cont:
+    set    y, 13                  [1]       ; 24: Full-bit timing for subsequent bits
+    jmp    pin, meas_one                    ; 25: Check current pin state
+    jmp    meas_zero                        ; 26: Pin LOW, go measure LOW
+new_one:
+    set    y, 6                   [1]       ; 27: Half-bit count for measuring HIGH
+meas_one:
+    jmp    pin, cont_one                    ; 28: Still HIGH?
+    jmp    meas_zero              [1]       ; 29: Went LOW - go measure LOW
+cont_one:
+    jmp    y--, meas_one                    ; 30: Keep counting while HIGH
+    in     osr, 1                           ; 31: Timeout while HIGH = 1 bit
+.wrap                                       ; Wraps to next_bit (instruction 0)

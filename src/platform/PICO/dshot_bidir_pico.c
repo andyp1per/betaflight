@@ -85,8 +85,9 @@ static const int8_t gcrDecodeLut[32] = {
     -1,  0,  8,  1, -1,  4, 12, -1
 };
 
-// Decode telemetry from fixed-interval sampling PIO (single 32-bit word with 21 bits)
-// Based on bidirectional DShot spec from brushlesswhoop.com
+// Decode telemetry from edge detection PIO (single 32-bit word with 20 GCR bits)
+// The edge detection PIO decodes differential encoding in hardware by measuring
+// pulse widths: long LOW = 0 bit, long HIGH = 1 bit. This gives us GCR bits directly.
 static uint32_t decodeTelemetryRaw(int ind, const uint32_t raw)
 {
     UNUSED(ind);
@@ -96,17 +97,9 @@ static uint32_t decodeTelemetryRaw(int ind, const uint32_t raw)
         return DSHOT_TELEMETRY_INVALID;
     }
 
-    // With LEFT shift, 21 bits are in bits 20:0
-    // First sample (start bit) at bit 20, last sample at bit 0
-    uint32_t bits21 = raw & 0x1FFFFF;  // Keep 21 bits
-
-    // Decode differential encoding: XOR with left-shifted self
-    // bit 19 = sample0 XOR sample1 = GCR bit 19 (MSB)
-    // bit 0 = sample19 XOR sample20 = GCR bit 0 (LSB)
-    uint32_t bits20 = (bits21 >> 1) ^ bits21;
-
-    // Discard bit 20 (start bit) - keep only bits 19:0
-    bits20 &= 0xFFFFF;
+    // Edge detection PIO outputs 20 GCR bits directly (no XOR decode needed)
+    // With LEFT shift, 20 bits are in bits 19:0
+    uint32_t bits20 = raw & 0xFFFFF;
 
     // GCR decode: map 4 groups of 5 bits to 4 nibbles
     // Same extraction as STM32: LSB group first
