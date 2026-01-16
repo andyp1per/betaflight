@@ -160,24 +160,27 @@ static void dshotUpdateComplete(void)
         // - Transmit: ~107µs, Turnaround: ~30µs, Receive: ~112µs = ~250µs total
         // - At 8kHz loop, telemetry from frame N arrives during frame N+2
         //
-        // Strategy: Check if SM is stuck by looking at its PC. If stuck in wait_low,
-        // restart it. Otherwise let it run - telemetry will be collected on next decode.
+        // Strategy: Check if SM is stuck by looking at its PC. If stuck in wait_high
+        // or wait_low, restart it. Otherwise let it run - telemetry will be collected on next decode.
+        //
+        // With 16x oversampling PIO program:
+        //   wait_high: instructions 15-17 (waiting for line to go HIGH)
+        //   wait_low:  instructions 18-20 (waiting for line to go LOW after HIGH)
+        //   sampling:  instructions 21-25 (collecting 512 samples)
         for (int motorIndex = 0; motorIndex < dshotMotorCount; ++motorIndex) {
             if (outgoingPacket[motorIndex] >= 0) {
                 const motorOutput_t *motor = &dshotMotors[motorIndex];
-                // Check program counter - wait_low is at offset+18 in edge detection bidir program
                 uint pc = pio_sm_get_pc(motor->pio, motor->pio_sm);
-                uint waitLowPc = motor->offset + 18;
-                if (pc == waitLowPc) {
+                uint pcOffset = pc - motor->offset;
+                // If stuck in wait_high (15-17) or wait_low (18-20), restart
+                if (pcOffset >= 15 && pcOffset <= 20) {
                     // SM is stuck waiting for ESC response - restart it
-                    // Jump to start (offset+BIDIR_START) to skip receive logic
                     pio_sm_restart(motor->pio, motor->pio_sm);
                     pio_sm_clear_fifos(motor->pio, motor->pio_sm);
                     pio_sm_exec_wait_blocking(motor->pio, motor->pio_sm,
                         pio_encode_jmp(motor->offset + dshot_600_bidir_BIDIR_START));
                 }
-                // If SM is elsewhere, it's either transmitting, receiving, or waiting
-                // for next frame. Don't disturb it - telemetry will arrive.
+                // If SM is elsewhere (transmitting, sampling, or at wrap), don't disturb it
             }
         }
     }
@@ -185,6 +188,12 @@ static void dshotUpdateComplete(void)
     for (int motorIndex = 0; motorIndex < dshotMotorCount; ++motorIndex) {
         if (outgoingPacket[motorIndex] >= 0) {
             const motorOutput_t *motor = &dshotMotors[motorIndex];
+            // Drain any leftover RX FIFO data before transmit to prevent FIFO stalls
+            // during the next receive cycle. If previous telemetry wasn't fully read,
+            // autopush could block mid-sample causing corrupted data.
+            while (!pio_sm_is_rx_fifo_empty(motor->pio, motor->pio_sm)) {
+                (void)pio_sm_get(motor->pio, motor->pio_sm);
+            }
             pio_sm_put(motor->pio, motor->pio_sm, outgoingPacket[motorIndex]);
         }
     }

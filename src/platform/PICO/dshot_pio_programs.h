@@ -13,31 +13,19 @@
 // --------- //
 
 #define dshot_600_wrap_target 0
-#define dshot_600_wrap 12
+#define dshot_600_wrap 0
 #define dshot_600_pio_version 0
 
 static const uint16_t dshot_600_program_instructions[] = {
             //     .wrap_target
-    0xff00, //  0: set    pins, 0                [31]
-    0xb442, //  1: nop                           [20]
-    0x80a0, //  2: pull   block
-    0x6050, //  3: out    y, 16
-    0x6041, //  4: out    y, 1
-    0x006a, //  5: jmp    !y, 10
-    0xfa01, //  6: set    pins, 1                [26]
-    0xe900, //  7: set    pins, 0                [9]
-    0x00e4, //  8: jmp    !osre, 4
-    0x0000, //  9: jmp    0
-    0xec01, // 10: set    pins, 1                [12]
-    0xf600, // 11: set    pins, 0                [22]
-    0x01e4, // 12: jmp    !osre, 4               [1]
+    0x0000, //  0: jmp    0
             //     .wrap
 };
 
 #if !PICO_NO_HARDWARE
 static const struct pio_program dshot_600_program = {
     .instructions = dshot_600_program_instructions,
-    .length = 13,
+    .length = 1,
     .origin = -1,
     .pio_version = dshot_600_pio_version,
 #if PICO_PIO_VERSION > 0
@@ -60,42 +48,42 @@ static inline pio_sm_config dshot_600_program_get_default_config(uint offset) {
 #define dshot_600_bidir_wrap 31
 #define dshot_600_bidir_pio_version 0
 
-#define dshot_600_bidir_BIDIR_START 2
+#define dshot_600_bidir_BIDIR_START 0
 
 static const uint16_t dshot_600_bidir_program_instructions[] = {
             //     .wrap_target
-    0x0058, //  0: jmp    x--, 24
-    0x8000, //  1: push   noblock
-    0xe081, //  2: set    pindirs, 1
-    0xe001, //  3: set    pins, 1
-    0x80a0, //  4: pull   block
-    0x6050, //  5: out    y, 16
-    0x6041, //  6: out    y, 1
-    0x006c, //  7: jmp    !y, 12
-    0xfa00, //  8: set    pins, 0                [26]
-    0xe901, //  9: set    pins, 1                [9]
-    0x00e6, // 10: jmp    !osre, 6
-    0x000f, // 11: jmp    15
-    0xec00, // 12: set    pins, 0                [12]
-    0xf601, // 13: set    pins, 1                [22]
-    0x01e6, // 14: jmp    !osre, 6               [1]
-    0xe080, // 15: set    pindirs, 0
-    0xe033, // 16: set    x, 19
-    0xa0eb, // 17: mov    osr, ~null
-    0x01d2, // 18: jmp    pin, 18                [1]
-    0xe046, // 19: set    y, 6
-    0x00db, // 20: jmp    pin, 27
-    0x0094, // 21: jmp    y--, 20
-    0x4061, // 22: in     null, 1
-    0x0000, // 23: jmp    0
-    0xe14d, // 24: set    y, 13                  [1]
-    0x00dc, // 25: jmp    pin, 28
-    0x0014, // 26: jmp    20
-    0xe146, // 27: set    y, 6                   [1]
-    0x00de, // 28: jmp    pin, 30
-    0x0114, // 29: jmp    20                     [1]
-    0x009c, // 30: jmp    y--, 28
-    0x40e1, // 31: in     osr, 1
+    0x80a0, //  0: pull   block
+    0xe081, //  1: set    pindirs, 1
+    0x6050, //  2: out    y, 16
+    0xe034, //  3: set    x, 20
+    0x6041, //  4: out    y, 1
+    0xe000, //  5: set    pins, 0
+    0x006b, //  6: jmp    !y, 11
+    0xb942, //  7: nop                           [25]
+    0xe901, //  8: set    pins, 1                [9]
+    0x00e4, //  9: jmp    !osre, 4
+    0x000e, // 10: jmp    14
+    0xab42, // 11: nop                           [11]
+    0xf701, // 12: set    pins, 1                [23]
+    0x01e4, // 13: jmp    !osre, 4               [1]
+    0xe080, // 14: set    pindirs, 0
+    0x20a0, // 15: wait   1 pin, 0
+    0x2020, // 16: wait   0 pin, 0
+    0xe023, // 17: set    x, 3
+    0xe05f, // 18: set    y, 31
+    0x4001, // 19: in     pins, 1
+    0xa442, // 20: nop                           [4]
+    0x0093, // 21: jmp    y--, 19
+    0x0052, // 22: jmp    x--, 18
+    0xa042, // 23: nop
+    0xa042, // 24: nop
+    0xa042, // 25: nop
+    0xa042, // 26: nop
+    0xa042, // 27: nop
+    0xa042, // 28: nop
+    0xa042, // 29: nop
+    0xa042, // 30: nop
+    0xa042, // 31: nop
             //     .wrap
 };
 

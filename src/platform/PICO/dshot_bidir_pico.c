@@ -43,13 +43,14 @@ FAST_DATA_ZERO_INIT dshotTelemetryCycleCounters_t dshotDMAHandlerCycleCounters;
 // - ESC responds ~30us later with 21-bit GCR-encoded telemetry at 5/4x bitrate
 // - Telemetry contains 12-bit eRPM data + 4-bit checksum
 //
-// This implementation uses edge detection (ported from pico-bidir-dshot by bastian2001)
-// instead of fixed-delay 3x oversampling. Edge detection is self-synchronizing and
-// more robust to ESC timing variations (works with BlueJay, AM32, BLHeli32, etc.)
+// This implementation uses edge detection with 4x oversampling. The PIO uses
+// 'wait' instructions for precise edge synchronization, then samples 128 bits
+// into 4 words via autopush. Edge positions are converted to GCR bits using
+// run-length decoding (based on ArduPilot's proven algorithm).
 
 bool dshot_program_bidir_init(PIO pio, uint sm, int offset, uint pin)
 {
-    bprintf("dshot_program_bidir_init on pin %d",pin);
+    bprintf("dshot_program_bidir_init on pin %d", pin);
 #ifdef DSHOT_DEBUG_PIO
     pio_sm_config config = dshot_600_bidir_debug_program_get_default_config(offset);
 #else
@@ -58,14 +59,16 @@ bool dshot_program_bidir_init(PIO pio, uint sm, int offset, uint pin)
 
     sm_config_set_set_pins(&config, pin, 1);
     sm_config_set_in_pins(&config, pin);
-    sm_config_set_jmp_pin(&config, pin);  // Required for edge detection receive (jmp pin instruction)
+    sm_config_set_jmp_pin(&config, pin);
     pio_gpio_init(pio, pin);
-    bprintf("dshot bidir on pin %d done init PIO->gpio for pio",pin);
-    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true); // set pin to output
+    bprintf("dshot bidir on pin %d done init PIO->gpio for pio", pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
 
-    gpio_set_pulls(pin, true, false); // Pull up - idle 1 when awaiting bidir telemetry input (PIO pindirs 0).
+    // Ensure GPIO input is enabled (required for reading pin state when pindirs=0)
+    gpio_set_input_enabled(pin, true);
+    gpio_set_pulls(pin, true, false);  // Pull up - idle HIGH for bidir telemetry
     sm_config_set_out_shift(&config, PIO_SHIFT_LEFT, PIO_NO_AUTO_PUSHPULL, 32);
-    sm_config_set_in_shift(&config, PIO_SHIFT_LEFT, PIO_NO_AUTO_PUSHPULL, 32);  // Left shift: first sample at bit 0
+    sm_config_set_in_shift(&config, PIO_SHIFT_LEFT, true, 32);  // Left shift, autopush at 32 bits
 
     float clocks_per_us = clock_get_hz(clk_sys) / 1000000;
 #ifdef TEST_DSHOT_SLOW
@@ -74,7 +77,12 @@ bool dshot_program_bidir_init(PIO pio, uint sm, int offset, uint pin)
     sm_config_set_clkdiv(&config, dshotGetPeriodTiming() / DSHOT_BIDIR_BIT_PERIOD * clocks_per_us);
 #endif
 
-    return PICO_OK == pio_sm_init(pio, sm, offset, &config);
+    bool ok = PICO_OK == pio_sm_init(pio, sm, offset, &config);
+    if (ok) {
+        // Initialize OSR to all 1s (mov osr, ~null)
+        pio_sm_exec(pio, sm, 0xa0eb);
+    }
+    return ok;
 }
 
 // GCR decode lookup table (maps 5-bit GCR to 4-bit nibble, -1 = invalid)
@@ -85,89 +93,121 @@ static const int8_t gcrDecodeLut[32] = {
     -1,  0,  8,  1, -1,  4, 12, -1
 };
 
-// Decode telemetry from edge detection PIO (single 32-bit word with 20 GCR bits)
-// The edge detection PIO decodes differential encoding in hardware by measuring
-// pulse widths: long LOW = 0 bit, long HIGH = 1 bit. This gives us GCR bits directly.
-static uint32_t decodeTelemetryRaw(int ind, const uint32_t raw)
+// Edge detection decoder for 4x oversampled telemetry
+// Algorithm:
+// 1. Scan samples to find edge transitions
+// 2. Normalize edge positions to handle timing jitter
+// 3. Convert run lengths between edges to GCR bits
+// 4. Decode GCR to 16-bit value and verify checksum
+
+#define OVERSAMPLING_RATE 4
+#define OVERSAMPLE_WORDS 4   // 4 x 32 = 128 samples
+#define MAX_EDGES 32
+
+static uint32_t decodeOversampledTelemetry(int motorIndex, const uint32_t *buffer)
 {
-    UNUSED(ind);
+    UNUSED(motorIndex);
 
-    if (raw == 0) {
-        // No response from ESC
-        return DSHOT_TELEMETRY_INVALID;
-    }
+    // Find edges in the sample stream
+    // Each word has 32 samples, MSB is earliest (left shift in PIO)
+    uint16_t edgePositions[MAX_EDGES];
+    int edgeCount = 0;
 
-    // Edge detection PIO outputs 20 GCR bits directly (no XOR decode needed)
-    // With LEFT shift, 20 bits are in bits 19:0
-    uint32_t bits20 = raw & 0xFFFFF;
+    uint8_t lastBit = (buffer[0] >> 31) & 1;
 
-    // GCR decode: map 4 groups of 5 bits to 4 nibbles
-    // Same extraction as STM32: LSB group first
-    uint32_t data = gcrDecodeLut[bits20 & 0x1F];              // bits 4:0 -> nibble 0
-    data |= gcrDecodeLut[(bits20 >> 5) & 0x1F] << 4;          // bits 9:5 -> nibble 1
-    data |= gcrDecodeLut[(bits20 >> 10) & 0x1F] << 8;         // bits 14:10 -> nibble 2
-    data |= gcrDecodeLut[(bits20 >> 15) & 0x1F] << 12;        // bits 19:15 -> nibble 3
-
-    // Check for invalid GCR codes
-    if (data > 0xFFFF) {
-#ifdef PICO_TRACE
-        static int badgcrs;
-        if (badgcrs % 50000 < 4) {
-            bprintf("\ndshot telem bad gcr [%d] raw=%08x bits20=%05x", badgcrs, raw, bits20);
+    for (int word = 0; word < OVERSAMPLE_WORDS && edgeCount < MAX_EDGES; word++) {
+        uint32_t samples = buffer[word];
+        for (int bit = 31; bit >= 0 && edgeCount < MAX_EDGES; bit--) {
+            uint8_t currentBit = (samples >> bit) & 1;
+            if (currentBit != lastBit) {
+                edgePositions[edgeCount++] = (word * 32) + (31 - bit);
+                lastBit = currentBit;
+            }
         }
-        badgcrs++;
-#endif
+    }
+
+    if (edgeCount < 2) {
         return DSHOT_TELEMETRY_INVALID;
     }
 
-    // Verify checksum (XOR of all nibbles should be 0xF)
-    uint32_t checksum = (data >> 12) ^ (data >> 8) ^ (data >> 4) ^ data;
-    if ((checksum & 0xF) != 0xF) {
-#ifdef PICO_TRACE
-        bprintf("\ncheckSum = %x (should be 0xf), raw=%08x", checksum & 0xF, raw);
-#endif
+    // Normalize edge positions to handle timing jitter
+    // The 'wait' instruction detects edges at slightly different points.
+    // We offset all edges so the first edge is at position 8 (bit 2 at 4x oversampling).
+    int16_t offset = 8 - (int16_t)edgePositions[0];
+    for (int i = 0; i < edgeCount; i++) {
+        edgePositions[i] = (uint16_t)((int16_t)edgePositions[i] + offset);
+    }
+
+    // Convert edge positions to GCR bits using run-length decoding
+    // Each run of N samples = ceil(N / OVERSAMPLING_RATE) bits
+    // Encoded as: 1 at MSB followed by (len-1) zeros
+    uint32_t gcrValue = 0;
+    uint32_t totalBits = 0;
+    uint16_t prevEdgePos = 0;  // Virtual start position
+
+    for (int i = 0; i <= edgeCount; i++) {
+        uint32_t len;
+        if (i < edgeCount) {
+            int32_t diff = edgePositions[i] - prevEdgePos;
+            if (totalBits >= 21U) {
+                break;
+            }
+            len = (diff + OVERSAMPLING_RATE / 2U) / OVERSAMPLING_RATE;
+        } else {
+            len = 21U - totalBits;  // Pad to 21 bits
+        }
+
+        if (len == 0) {
+            len = 1;
+        }
+
+        gcrValue <<= len;
+        gcrValue |= 1U << (len - 1U);
+        prevEdgePos = (i < edgeCount) ? edgePositions[i] : prevEdgePos;
+        totalBits += len;
+    }
+
+    if (totalBits != 21U) {
         return DSHOT_TELEMETRY_INVALID;
     }
 
-    // Return 12-bit telemetry value (discard 4-bit checksum)
-    return (data >> 4) & 0xFFF;
+    // Remove start bit (MSB) to get 20-bit GCR value
+    uint32_t gcr20 = gcrValue & 0xFFFFF;
+
+    // GCR decode: extract 4 nibbles from 4 x 5-bit symbols
+    uint8_t n3 = gcrDecodeLut[(gcr20 >> 15) & 0x1F];
+    uint8_t n2 = gcrDecodeLut[(gcr20 >> 10) & 0x1F];
+    uint8_t n1 = gcrDecodeLut[(gcr20 >> 5) & 0x1F];
+    uint8_t n0 = gcrDecodeLut[gcr20 & 0x1F];
+
+    if (n0 > 15 || n1 > 15 || n2 > 15 || n3 > 15) {
+        return DSHOT_TELEMETRY_INVALID;
+    }
+
+    // Assemble 16-bit value and verify checksum
+    uint32_t decodedValue = (n3 << 12) | (n2 << 8) | (n1 << 4) | n0;
+    uint32_t csum = decodedValue;
+    csum = csum ^ (csum >> 8);
+    csum = csum ^ (csum >> 4);
+
+    if ((csum & 0xF) != 0xF) {
+        return DSHOT_TELEMETRY_INVALID;
+    }
+
+    // Return 12-bit eRPM (remove 4-bit checksum)
+    return (decodedValue >> 4) & 0xFFF;
 }
 
 bool dshotTelemetryWait(void)
 {
     bool telemetryWait = false;
 #ifdef USE_DSHOT_TELEMETRY
-    // Wait for telemetry reception to complete
     bool telemetryPending;
     const timeUs_t startTimeUs = micros();
 
     bprintf("dshotTelemetryWait");
     do {
         telemetryPending = false;
-/*
-  TODO TBC this could be something like
-        for (unsigned motorIndex = 0; motorIndex < dshotMotorCount && !telemetryPending; motorIndex++) {
-            const motorOutput_t *motor = &dshotMotors[motorIndex];
-
-            // call a function that (taking into account which PIO program we are running), tells
-            // us on the basis of
-            //    uint8_t pio_pc = pio_sm_get_pc(motor->pio, motor->pio_sm) - motor->offset;
-            // whether we have finished receiving a sequence of bidir telemetry bits and it's
-            // therefore safe to send out a dshot command
-            telemetryPending |= SafeToSend(motor);
-
-            or, we can keep track of state based on whether we have called
-               dshotwrite
-               dshotdecodetelemetry successfully
-               dshotdecodetelemetry unsuccessfully
-            and, if necessary, keep calling dshotdecodetelemetry (up to a timeout) until telemetry received
-        }
-
-  I think telemetryPending tracks when we are safe to transmit
-  and telemetryWait is for debugging, telling us if we had to wait
-  (but no code looks at the return value of this function)
-
- */
         telemetryWait |= telemetryPending;
 
         if (cmpTimeUs(micros(), startTimeUs) > DSHOT_TELEMETRY_TIMEOUT) {
@@ -179,18 +219,16 @@ bool dshotTelemetryWait(void)
         DEBUG_SET(DEBUG_DSHOT_TELEMETRY_COUNTS, 2, debug[2] + 1);
     }
 
-    bprintf("dshotTelemetryWait returning %d",telemetryWait);
+    bprintf("dshotTelemetryWait returning %d", telemetryWait);
 #endif
     return telemetryWait;
 }
 
 bool dshotDecodeTelemetry(void)
 {
-///////    bprintf("dshotDecodeTelemtry");
 #ifndef USE_DSHOT_TELEMETRY
     return true;
 #else
-
     if (!useDshotTelemetry) {
         return true;
     }
@@ -203,42 +241,30 @@ bool dshotDecodeTelemetry(void)
         const motorOutput_t *motor = &dshotMotors[motorIndex];
 
         int fifo_words = pio_sm_get_rx_fifo_level(motor->pio, motor->pio_sm);
-        if (fifo_words < 1) {
-#ifdef PICO_TRACE
-            static int notelem;
-            if ((notelem % 250000) < 4) {
-                bprintf("NO TELEM [%d] dshot motor %d, sm at pc-offset = %d, rx:%d, tx:%d",
-                        notelem,
-                        motorIndex,
-                        pio_sm_get_pc(motor->pio, motor->pio_sm) - motor->offset,
-                        pio_sm_get_rx_fifo_level(motor->pio, motor->pio_sm),
-                        pio_sm_get_tx_fifo_level(motor->pio, motor->pio_sm)
-                       );
-            }
-            notelem++;
-#endif
+
+        // Wait until we have all 4 words, or skip if not enough yet
+        if (fifo_words < OVERSAMPLE_WORDS) {
             continue;
         }
 
-        // Edge detection PIO returns a single word with 21 bits of telemetry
-        if (fifo_words > 1) {
-            // FIFO has more than one telemetry item - discard old ones, keep most recent
-            bprintf("*** fifo_words: %d", fifo_words);
-            while (fifo_words > 1) {
-                (void)pio_sm_get(motor->pio, motor->pio_sm); // discard
-                fifo_words = pio_sm_get_rx_fifo_level(motor->pio, motor->pio_sm);
-            }
+        // Discard older data to get most recent frame
+        while (fifo_words > OVERSAMPLE_WORDS) {
+            (void)pio_sm_get(motor->pio, motor->pio_sm);
+            fifo_words--;
         }
 
-        const uint32_t raw = pio_sm_get_blocking(motor->pio, motor->pio_sm);
+        // Read 4 words of oversampled data
+        uint32_t sampleBuffer[OVERSAMPLE_WORDS];
+        for (int i = 0; i < OVERSAMPLE_WORDS; i++) {
+            sampleBuffer[i] = pio_sm_get_blocking(motor->pio, motor->pio_sm);
+        }
 
-        uint32_t rawValue = decodeTelemetryRaw(motorIndex, raw);
+        uint32_t rawValue = decodeOversampledTelemetry(motorIndex, sampleBuffer);
 
         DEBUG_SET(DEBUG_DSHOT_TELEMETRY_COUNTS, 0, debug[0] + 1);
         dshotTelemetryState.readCount++;
 
         if (rawValue != DSHOT_TELEMETRY_INVALID) {
-            // Check EDT enable or store raw value
             if ((rawValue == 0x0E00) && (dshotCommandGetCurrent(motorIndex) == DSHOT_CMD_EXTENDED_TELEMETRY_ENABLE)) {
                 bprintf("\n** received dshot 0x0E00");
                 dshotTelemetryState.motorState[motorIndex].telemetryTypes = 1 << DSHOT_TELEMETRY_TYPE_STATE_EVENTS;
