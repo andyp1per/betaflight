@@ -85,7 +85,7 @@ const adcDevice_t adcHardware[ADCDEV_COUNT] = {
 
 adcDevice_t adcDevice[ADCDEV_COUNT];
 
-#if defined(STM32H743xx) || defined(STM32H750xx) || defined(STM32H723xx) || defined(STM32H725xx) || defined(STM32H730xx) || defined(STM32H735xx)
+#if defined(STM32H743xx) || defined(STM32H750xx) || defined(STM32H723xx) || defined(STM32H725xx) || defined(STM32H730xx) || defined(STM32H735xx) || defined(STM32H757xx)
 #define ADC_DEVICE_FOR_INTERNAL ADC_DEVICES_3
 #elif defined(STM32H7A3xx) || defined(STM32H7A3xxQ)
 #define ADC_DEVICE_FOR_INTERNAL ADC_DEVICES_2
@@ -106,7 +106,7 @@ const adcTagMap_t adcTagMap[] = {
     { DEFIO_TAG_E__NONE, ADC_DEVICE_FOR_INTERNAL,   ADC_CHANNEL_VREFINT,    18 }, // 18 VREFINT
     { DEFIO_TAG_E__NONE, ADC_DEVICE_FOR_INTERNAL,   ADC_CHANNEL_TEMPSENSOR, 17 }, // 17 VSENSE
     { DEFIO_TAG_E__NONE, ADC_DEVICE_FOR_INTERNAL,   ADC_CHANNEL_VBAT,       16 }, // 16 VBAT/4
-#elif defined(STM32H743xx) || defined(STM32H750xx) // RM0433 Rev 7 Table 205. ADC interconnection
+#elif defined(STM32H743xx) || defined(STM32H750xx) || defined(STM32H757xx) // RM0433 Rev 7 Table 205. ADC interconnection
     { DEFIO_TAG_E__NONE, ADC_DEVICE_FOR_INTERNAL,   ADC_CHANNEL_VREFINT,    19 }, // 19 VREFINT
     { DEFIO_TAG_E__NONE, ADC_DEVICE_FOR_INTERNAL,   ADC_CHANNEL_TEMPSENSOR, 18 }, // 18 VSENSE
     { DEFIO_TAG_E__NONE, ADC_DEVICE_FOR_INTERNAL,   ADC_CHANNEL_VBAT,       17 }, // 17 VBAT/4
@@ -253,7 +253,7 @@ static int adcFindTagMapEntry(ioTag_t tag)
 
 // H743, H735, H750 and H7A3 seems to use 16-bit precision value,
 // while H723, H725 and H730 seems to use 12-bit precision value.
-#if defined(STM32H743xx) || defined(STM32H750xx) || defined(STM32H7A3xx) || defined(STM32H7A3xxQ)
+#if defined(STM32H743xx) || defined(STM32H750xx) || defined(STM32H7A3xx) || defined(STM32H7A3xxQ) || defined(STM32H757xx)
 #define VREFINT_CAL_SHIFT 4
 #elif defined(STM32H723xx) || defined(STM32H725xx) || defined(STM32H730xx) || defined(STM32H735xx)
 #define VREFINT_CAL_SHIFT 0
@@ -261,6 +261,7 @@ static int adcFindTagMapEntry(ioTag_t tag)
 #error Unknown MCU
 #endif
 
+#if defined(USE_ADC_INTERNAL)
 static void adcInitCalibrationValues(void)
 {
     adcVREFINTCAL = *VREFINT_CAL_ADDR >> VREFINT_CAL_SHIFT;
@@ -268,6 +269,7 @@ static void adcInitCalibrationValues(void)
     adcTSCAL2 = *TEMPSENSOR_CAL2_ADDR >> VREFINT_CAL_SHIFT;
     adcTSSlopeK = (TEMPSENSOR_CAL2_TEMP - TEMPSENSOR_CAL1_TEMP) * 1000 / (adcTSCAL2 - adcTSCAL1);
 }
+#endif
 
 // ADC conversion result DMA buffer
 // Need this separate from the main adcValue[] array, because channels are numbered
