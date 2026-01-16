@@ -64,14 +64,18 @@ inner_loop:
     jmp    x--, outer_loop                  ; 22: Continue outer loop
 
     ; Sampling complete - 128 samples pushed via autopush (4 x 32-bit words)
-    ; Pad to 32 instructions (currently at 23, need 9 more nops)
-    nop                                     ; 23
-    nop                                     ; 24
-    nop                                     ; 25
-    nop                                     ; 26
-    nop                                     ; 27
-    nop                                     ; 28
-    nop                                     ; 29
-    nop                                     ; 30
-    nop                                     ; 31
+    ; Set pin back to output HIGH (idle state) before wrapping.
+    ; The C code always restarts SMs to instruction 0 before each transmit,
+    ; so the turnaround timing is controlled by when dshotUpdateComplete() is
+    ; called, not by delay loops here. We just need to ensure the pin is in
+    ; the correct idle state.
+    set    pindirs, 1                       ; 23: Switch back to output mode
+    set    pins, 1                          ; 24: Set pin HIGH (idle state)
+    nop                                     ; 25: Padding
+    nop                                     ; 26: Padding
+    nop                                     ; 27: Padding
+    nop                                     ; 28: Padding
+    nop                                     ; 29: Padding
+    nop                                     ; 30: Padding
+    nop                                     ; 31: Padding
 .wrap

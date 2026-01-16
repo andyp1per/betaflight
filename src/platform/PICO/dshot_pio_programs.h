@@ -75,8 +75,8 @@ static const uint16_t dshot_600_bidir_program_instructions[] = {
     0xa442, // 20: nop                           [4]
     0x0093, // 21: jmp    y--, 19
     0x0052, // 22: jmp    x--, 18
-    0xa042, // 23: nop
-    0xa042, // 24: nop
+    0xe081, // 23: set    pindirs, 1
+    0xe001, // 24: set    pins, 1
     0xa042, // 25: nop
     0xa042, // 26: nop
     0xa042, // 27: nop

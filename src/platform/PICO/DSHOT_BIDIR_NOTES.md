@@ -2,8 +2,8 @@
 
 ## Current Status (January 2026)
 
-**Status:** Working at ~98% decode rate with 4x oversampling edge detection.
-**Tested with:** BlueJay ESCs on RP2350B (HELLBENDER_0001 config)
+**Status:** Working at ~99.5% decode rate at 0 RPM, ~40% at speed. PC-based state machine management.
+**Tested with:** BlueJay ESCs on RP2350B (HELLBENDER_0001 config) at 8kHz PID loop
 
 ## What Works
 
@@ -18,7 +18,25 @@
 ### FIFO Synchronization is Critical
 If the RX FIFO isn't drained before starting a new transmit, the PIO can stall
 mid-sample when autopush blocks on a full FIFO. This causes "first word valid,
-rest all 1s" corruption. **Solution:** Drain RX FIFO in transmit loop before `pio_sm_put()`.
+rest all 1s" corruption. **Solution:** Drain RX FIFO before `pio_sm_put()`, but only
+when SM is in a safe state (PC=0 or PC>=23).
+
+### PC-Based State Machine Management
+The PIO state machine must be managed carefully to avoid duplicate pulses or missed updates:
+- **PC=0**: SM is blocked on `pull`, ready for new data
+- **PC=1-14**: SM is transmitting, don't interrupt
+- **PC=15-16**: SM is waiting for ESC response (`wait` instructions)
+- **PC=17-22**: SM is sampling telemetry, don't interrupt
+- **PC=23-31**: SM finished receive, about to wrap to PC=0
+
+**Strategy:**
+- If PC=0 or PC>=23: Safe to drain RX FIFO and send new data
+- If PC=15-16 for first time: Skip (normal ESC turnaround ~25µs)
+- If PC=15-16 for 2+ consecutive calls: ESC didn't respond, restart SM
+- If PC=1-14 or 17-22: Skip (mid-cycle, would cause issues)
+
+This prevents duplicate pulses (which occurred when restarting during normal turnaround)
+while still recovering from truly stuck states (ESC didn't respond).
 
 ### Edge Normalization Handles Timing Jitter
 The `wait 0 pin` instruction detects the falling edge at slightly different points
@@ -93,12 +111,15 @@ After modifying `dshot.pio`:
 
 ## Known Issues / Future Work
 
-- **~2% error rate from edge jitter** - Some edge timing variations cause decode errors.
-  Could potentially improve with more sophisticated edge detection or voting.
+- **~60% error rate when motor spinning** - At 0 RPM, error rate is ~0.5%. When motor
+  is spinning, error rate jumps to ~60%. Likely timing-related - motor electrical noise
+  or ESC response timing changes under load. Needs investigation.
+- **~50% update skip rate** - At 8kHz PID loop, the ~95µs DShot cycle leaves only ~30µs
+  margin. We catch the SM mid-cycle about half the time, resulting in skipped updates.
+  Effectively running at ~4kHz motor updates. Could improve with faster PIO clock or
+  lower PID rate.
 - **RPM wrapping at high speed** - Reported values wrap past ~2000 RPM. May be
   eRPM to RPM conversion issue or EDT (Extended Telemetry) not being handled.
-- **Configurator shows ~10% error** - Higher than debug output suggests. May be
-  related to debug output overhead or telemetry stats calculation.
 
 ## Implementation History
 
@@ -106,8 +127,12 @@ After modifying `dshot.pio`:
 2. **Fixed-Interval (Synchronized):** Fragile to ESC timing variations.
 3. **PIO Edge Detection (jmp pin):** Didn't work - RP2350 erratum E9.
 4. **Software Edge Detection Loop:** Worked but timing jitter issues.
-5. **`wait` Instructions + Edge Normalization:** Current approach. 98% success rate.
+5. **`wait` Instructions + Edge Normalization:** 98% success rate at 0 RPM.
 6. **FIFO Drain Fix:** Resolved M2 channel failures (was 0%, now 98%).
+7. **PC-Based SM Management:** Fixed duplicate pulses. Now 99.5% at 0 RPM.
+   - Only send when SM at PC=0 or PC>=23 (safe states)
+   - Track consecutive waits at PC=15-16 to detect stuck vs normal turnaround
+   - Skip updates when SM mid-cycle to prevent duplicates
 
 ## Reference
 
