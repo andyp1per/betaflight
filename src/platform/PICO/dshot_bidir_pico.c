@@ -36,14 +36,14 @@
 // TODO use with TELEMETRY for cli report (or not)
 FAST_DATA_ZERO_INIT dshotTelemetryCycleCounters_t dshotDMAHandlerCycleCounters;
 
-#define DSHOT_BIDIR_BIT_PERIOD 40
+#define DSHOT_BIDIR_BIT_PERIOD 48
 
 // Bidirectional DShot telemetry protocol:
 // - FC sends inverted DShot frame (idle HIGH, 1 = LOW pulse, 0 = HIGH pulse)
 // - ESC responds ~30us later with 21-bit GCR-encoded telemetry at 5/4x bitrate
 // - Telemetry contains 12-bit eRPM data + 4-bit checksum
 //
-// This implementation uses edge detection with 4x oversampling. The PIO uses
+// This implementation uses edge detection with 5.5x oversampling. The PIO uses
 // 'wait' instructions for precise edge synchronization, then samples 128 bits
 // into 4 words via autopush. Edge positions are converted to GCR bits using
 // run-length decoding (based on ArduPilot's proven algorithm).
@@ -67,6 +67,14 @@ bool dshot_program_bidir_init(PIO pio, uint sm, int offset, uint pin)
     // Ensure GPIO input is enabled (required for reading pin state when pindirs=0)
     gpio_set_input_enabled(pin, true);
     gpio_set_pulls(pin, true, false);  // Pull up - idle HIGH for bidir telemetry
+
+    // Critical: Ensure PIO controls output enable (OE) - no overrides
+    // Without this, the output driver may stay active when pindirs=0,
+    // preventing ESC from pulling line low for telemetry
+    gpio_set_oeover(pin, GPIO_OVERRIDE_NORMAL);
+    gpio_set_outover(pin, GPIO_OVERRIDE_NORMAL);
+    gpio_set_drive_strength(pin, GPIO_DRIVE_STRENGTH_2MA);  // Minimum drive strength
+    gpio_set_slew_rate(pin, GPIO_SLEW_RATE_SLOW);
     sm_config_set_out_shift(&config, PIO_SHIFT_LEFT, PIO_NO_AUTO_PUSHPULL, 32);
     sm_config_set_in_shift(&config, PIO_SHIFT_LEFT, true, 32);  // Left shift, autopush at 32 bits
 
@@ -100,8 +108,9 @@ static const int8_t gcrDecodeLut[32] = {
 // 3. Convert run lengths between edges to GCR bits
 // 4. Decode GCR to 16-bit value and verify checksum
 
-#define OVERSAMPLING_RATE 4
-#define OVERSAMPLE_WORDS 4   // 4 x 32 = 128 samples
+// Actual oversampling rate is 5.5x (38.4 PIO cycles/bit ÷ 7 cycles/sample)
+// For run-length decoding: len = round(diff / 5.5) = (diff * 2 + 5) / 11
+#define OVERSAMPLE_WORDS 4   // 4 x 32 = 128 samples (need 115 for 21 bits at 5.5x)
 #define MAX_EDGES 32
 
 static uint32_t decodeOversampledTelemetry(int motorIndex, const uint32_t *buffer)
@@ -132,14 +141,14 @@ static uint32_t decodeOversampledTelemetry(int motorIndex, const uint32_t *buffe
 
     // Normalize edge positions to handle timing jitter
     // The 'wait' instruction detects edges at slightly different points.
-    // We offset all edges so the first edge is at position 8 (bit 2 at 4x oversampling).
-    int16_t offset = 8 - (int16_t)edgePositions[0];
+    // We offset all edges so the first edge is at position 11 (bit 2 at 5.5x oversampling).
+    int16_t offset = 11 - (int16_t)edgePositions[0];
     for (int i = 0; i < edgeCount; i++) {
         edgePositions[i] = (uint16_t)((int16_t)edgePositions[i] + offset);
     }
 
     // Convert edge positions to GCR bits using run-length decoding
-    // Each run of N samples = ceil(N / OVERSAMPLING_RATE) bits
+    // Each run of N samples at 5.5x oversampling: len = round(N / 5.5) = (N * 2 + 5) / 11
     // Encoded as: 1 at MSB followed by (len-1) zeros
     uint32_t gcrValue = 0;
     uint32_t totalBits = 0;
@@ -152,7 +161,8 @@ static uint32_t decodeOversampledTelemetry(int motorIndex, const uint32_t *buffe
             if (totalBits >= 21U) {
                 break;
             }
-            len = (diff + OVERSAMPLING_RATE / 2U) / OVERSAMPLING_RATE;
+            // len = round(diff / 5.5) using integer math: (diff * 2 + 5) / 11
+            len = (diff * 2U + 5U) / 11U;
         } else {
             len = 21U - totalBits;  // Pad to 21 bits
         }

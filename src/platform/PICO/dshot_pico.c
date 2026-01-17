@@ -160,18 +160,20 @@ static void dshotUpdateComplete(void)
         // PIO program structure:
         //   0:     pull block (waiting for data) - SAFE
         //   1-13:  transmit - NOT SAFE (would cause duplicate)
-        //   14:    switch to input - NOT SAFE
-        //   15-16: wait for ESC response - NOT SAFE
-        //   17-22: sampling telemetry - NOT SAFE (FIFO being filled)
-        //   23-31: post-receive nops - SAFE (receive complete, about to wrap)
+        //   14-15: settling delay + switch to input - NOT SAFE
+        //   16:    wait 1 pin (wait for HIGH) - NOT SAFE
+        //   17:    set x (loop setup) - NOT SAFE
+        //   18:    wait 0 pin (wait for falling edge) - NOT SAFE
+        //   19-23: sampling telemetry - NOT SAFE (FIFO being filled)
+        //   24-31: post-receive (output mode + padding) - SAFE
         //
-        // Safe states: PC=0 (waiting) or PC=23-31 (receive done, wrapping)
+        // Safe states: PC=0 (waiting) or PC=24-31 (receive done, wrapping)
         // In safe states, RX FIFO has complete telemetry data ready to drain.
         //
         // Strategy:
         // - If SM is in safe state: Drain RX FIFO, put TX data
-        // - If SM is mid-cycle (1-22): leave it alone
-        // Track consecutive calls where SM is at wait instructions (PC=15-16)
+        // - If SM is mid-cycle (1-23): leave it alone
+        // Track consecutive calls where SM is at wait instructions (PC=16 or 18)
         // to distinguish normal ESC turnaround from truly stuck state
         static uint8_t waitCount[MAX_SUPPORTED_MOTORS] = {0};
 
@@ -181,9 +183,9 @@ static void dshotUpdateComplete(void)
                 uint pc = pio_sm_get_pc(motor->pio, motor->pio_sm);
                 uint pcOffset = pc - motor->offset;
 
-                // Safe to send if at instruction 0 (waiting) or 23-31 (post-receive)
-                bool readyToSend = (pcOffset == 0) || (pcOffset >= 23);
-                bool atWaitInstr = (pcOffset == 15) || (pcOffset == 16);
+                // Safe to send if at instruction 0 (waiting) or 24-31 (post-receive)
+                bool readyToSend = (pcOffset == 0) || (pcOffset >= 24);
+                bool atWaitInstr = (pcOffset == 16) || (pcOffset == 18);
 
                 if (readyToSend) {
                     // SM completed its cycle - drain RX FIFO and send
@@ -193,7 +195,7 @@ static void dshotUpdateComplete(void)
                     pio_sm_put(motor->pio, motor->pio_sm, outgoingPacket[motorIndex]);
                     waitCount[motorIndex] = 0;
                 } else if (atWaitInstr) {
-                    // SM is at wait instructions (15-16)
+                    // SM is at wait instructions (16 or 18)
                     // Could be normal turnaround (~25µs) or truly stuck (ESC didn't respond)
                     // Only restart if stuck for multiple consecutive calls (>125µs at 8kHz)
                     waitCount[motorIndex]++;
@@ -208,7 +210,7 @@ static void dshotUpdateComplete(void)
                     }
                     // else: First time at wait - might be normal turnaround, skip this update
                 } else {
-                    // SM is mid-transmit or mid-receive (1-14, 17-22) - skip
+                    // SM is mid-transmit or mid-receive (1-15, 18-23) - skip
                     waitCount[motorIndex] = 0;
                 }
             }

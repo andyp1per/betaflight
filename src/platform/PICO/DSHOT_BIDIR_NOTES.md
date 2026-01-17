@@ -4,10 +4,11 @@
 
 **Status:** Working at ~99.5% decode rate at 0 RPM, ~40% at speed. PC-based state machine management.
 **Tested with:** BlueJay ESCs on RP2350B (HELLBENDER_0001 config) at 8kHz PID loop
+**Timing:** 48-cycle TX bit period, 7-cycle sample period (5.5x oversampling)
 
 ## What Works
 
-- **4x oversampling with edge detection** - PIO samples 128 bits, C code detects edges
+- **5.5x oversampling with edge detection** - PIO samples 128 bits (7 cycles/sample), C code detects edges
 - **Edge normalization** - Handles timing jitter in start bit detection
 - **FIFO drain before transmit** - Prevents FIFO stalls mid-sample
 - **ArduPilot-style run-length decoding** - Proven algorithm for edge-to-GCR conversion
@@ -38,11 +39,35 @@ The PIO state machine must be managed carefully to avoid duplicate pulses or mis
 This prevents duplicate pulses (which occurred when restarting during normal turnaround)
 while still recovering from truly stuck states (ESC didn't respond).
 
-### Edge Normalization Handles Timing Jitter
-The `wait 0 pin` instruction detects the falling edge at slightly different points
-relative to the actual start bit. This shifts the entire sampling window. We compensate
-by normalizing edge positions so the first detected edge is always at position 8
-(corresponding to bit 2 at 4x oversampling for the expected GCR pattern).
+### Edge Normalization is REQUIRED (Don't Remove It!)
+The `wait 0 pin` instruction detects the falling edge, but the exact sample position
+where that edge appears varies due to:
+1. Sub-cycle timing - edge can occur at any point within a PIO clock cycle
+2. ESC response timing variations
+3. Sampling grid alignment relative to actual edge
+
+**Why normalization matters:** The run-length decoder calculates bit lengths as:
+```c
+len = (diff * 2 + 5) / 11;  // round(diff / 5.5) using integer math
+```
+Without normalization, if first edge is at position 5 instead of 11:
+- First run: 5 samples → rounds to 1 bit (should be 2 bits)
+- All subsequent run lengths are off by 1 bit
+- Result: ~15% error rate instead of 0.5%
+
+**The fix:** Normalize all edge positions so first edge is at position 11:
+```c
+int16_t offset = 11 - (int16_t)edgePositions[0];
+for (int i = 0; i < edgeCount; i++) {
+    edgePositions[i] = (uint16_t)((int16_t)edgePositions[i] + offset);
+}
+```
+This aligns the sampling grid to bit boundary 2 (11 ÷ 5.5 = 2 bits), ensuring consistent
+decoding regardless of actual edge detection timing.
+
+**DO NOT:** Try to "fix" this by starting run-length decode from first edge position
+instead of position 0 - this causes 100% error rate because the algorithm expects
+to decode leading bits before the first edge.
 
 ### RP2350 PIO Erratum E9
 The `jmp pin` instruction is broken on RP2350. Use `wait 1 pin` / `wait 0 pin`
@@ -70,16 +95,30 @@ Output: `obj/betaflight_*_RP2350B_HELLBENDER_0001.uf2`
 
 ```
 Instructions 0-13:  Transmit (inverted DShot command)
-Instruction  14:    set pindirs, 0 (switch to input mode)
-Instruction  15:    wait 1 pin 0 (wait for line to go HIGH - idle)
-Instruction  16:    wait 0 pin 0 (wait for falling edge - start bit)
-Instructions 17-22: 4x oversampling loop (4 outer × 32 inner = 128 samples)
-Instructions 23-31: Padding (nop to fill 32-instruction slot)
+Instruction  14:    nop [7] - settling delay (~280ns) before switching to input
+Instruction  15:    set pindirs, 0 (switch to input mode)
+Instruction  16:    wait 1 pin 0 (wait for line to go HIGH - idle)
+Instruction  17:    wait 0 pin 0 (wait for falling edge - start bit)
+Instructions 18-23: 4x oversampling loop (4 outer × 32 inner = 128 samples)
+Instructions 24-25: Switch back to output, drive HIGH
+Instructions 26-31: Padding nops
 ```
+
+**Transmit timing (48 cycles per bit, matches F405 reference):**
+- '1' bit: nop [29] + set pins [13] + jmp = 32 cycles LOW, 16 cycles HIGH (67% duty)
+- '0' bit: nop [13] + set pins [29] + jmp = 16 cycles LOW, 32 cycles HIGH (33% duty)
+- At 150MHz / (48 cycles × clkdiv): ~600ns short pulse, ~1.1µs long pulse
+
+**Receive timing (7 cycles per sample for 5.5x oversampling):**
+- Sample loop: in pins (1) + nop [3] (4) + jmp (2) = 7 cycles per sample
+- Telemetry bit = 38.4 PIO cycles (TX bit × 4/5)
+- 7 cycles per sample gives 38.4/7 = 5.49x oversampling
+- 21 bits × 5.5 = 115 samples needed, fits in 128 with margin
+- Run-length decoding uses exact 5.5 rate: len = (diff × 2 + 5) / 11
 
 Key points:
 - `wait` instructions provide precise edge sync (unlike broken `jmp pin`)
-- 8 PIO cycles per sample at 4x oversampling rate
+- 5.5x oversampling is the maximum that fits in 128-sample buffer
 - Autopush at 32 bits sends 4 words to RX FIFO (fits default 4-word depth)
 - FIFO must be drained before next TX to prevent autopush stalls
 
@@ -130,9 +169,28 @@ After modifying `dshot.pio`:
 5. **`wait` Instructions + Edge Normalization:** 98% success rate at 0 RPM.
 6. **FIFO Drain Fix:** Resolved M2 channel failures (was 0%, now 98%).
 7. **PC-Based SM Management:** Fixed duplicate pulses. Now 99.5% at 0 RPM.
-   - Only send when SM at PC=0 or PC>=23 (safe states)
-   - Track consecutive waits at PC=15-16 to detect stuck vs normal turnaround
+   - Only send when SM at PC=0 or PC>=24 (safe states)
+   - Track consecutive waits at PC=16-17 to detect stuck vs normal turnaround
    - Skip updates when SM mid-cycle to prevent duplicates
+8. **48-Cycle Bit Period:** Changed from 40 to 48 cycles for finer timing control.
+   - Matches F405 reference timing (~600ns/1.1µs)
+   - Required adjusting receive sample loop from nop [4] to nop [6] (8→10 cycles)
+   - Maintains 99.5% decode rate at 0 RPM
+9. **Settling Delay Before Input Mode:** Added 8-cycle (~280ns) delay after TX before
+   switching to input mode. Prevents ringing from affecting edge detection.
+10. **5.5x Oversampling:** Changed from 10 to 7 cycles per sample for maximum oversampling.
+    - 5.5x is the maximum that fits 21 bits in 128-sample buffer (6.4x would need 134 samples)
+    - Uses exact 5.5 rate in decoder: len = (diff × 2 + 5) / 11
+    - Moved `set x` before `wait 0 pin` to reduce first-sample delay to 2 cycles
+    - Normalization target changed from 8 to 11 (bit 2 at 5.5x)
+
+## Things That Don't Work (Don't Try These Again)
+
+- **Removing edge normalization:** Causes ~15% error rate at 0 RPM (vs 0.5% with it)
+- **Starting run-length decode from first edge instead of position 0:** 100% error rate
+- **Using `jmp pin` for edge detection:** RP2350 erratum E9 makes it unreliable
+- **6x oversampling (6 cycles/sample):** Actually gives 6.4x, requiring 134 samples for
+  21 bits - exceeds 128-sample buffer, causing last edge to be cut off (100% error)
 
 ## Reference
 

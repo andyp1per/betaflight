@@ -12,7 +12,15 @@ dummy:
 ; Uses 'wait' instructions for precise edge detection (jmp pin is broken on RP2350)
 ;
 ; Transmit: 14 instructions (0-13)
-; Receive: 18 instructions (14-31) - uses 'wait 1 pin' / 'wait 0 pin' for sync
+; Receive: 18 instructions (14-31):
+;   14:    settling delay before switching to input
+;   15:    switch to input mode
+;   16:    wait 1 pin (wait for HIGH)
+;   17:    set x (setup outer loop before edge detection)
+;   18:    wait 0 pin (wait for falling edge)
+;   19-23: 4x oversampling loop (first sample 2 cycles after edge)
+;   24-25: switch back to output, drive HIGH
+;   26-31: padding
 ; Total: 32 instructions
 
 .program dshot_600_bidir
@@ -30,48 +38,42 @@ bitloop_tx:
     set    pins, 0                          ; 5: Start of bit (LOW)
     jmp    !y, outzero_tx                   ; 6: Branch on bit value
 outone_tx:
-    nop                          [25]       ; 7: '1' = 27 cycles LOW total
-    set    pins, 1               [9]        ; 8: then 13 cycles HIGH
+    nop                          [29]       ; 7: '1' = 32 cycles LOW (1.113µs, 67%)
+    set    pins, 1               [13]       ; 8: 16 cycles HIGH (557ns)
     jmp    !osre, bitloop_tx                ; 9: Next bit if more
     jmp    receive                          ; 10: Done TX -> receive
 outzero_tx:
-    nop                          [11]       ; 11: '0' = 13 cycles LOW total
-    set    pins, 1               [23]       ; 12: then 27 cycles HIGH
-    jmp    !osre, bitloop_tx     [1]        ; 13: Next bit (fall through when done)
+    nop                          [13]       ; 11: '0' = 16 cycles LOW (557ns, 33%)
+    set    pins, 1               [29]       ; 12: 32 cycles HIGH (1.113µs)
+    jmp    !osre, bitloop_tx                ; 13: Next bit (no delay for uniform 48-cycle period)
 
 receive:
-    set    pindirs, 0                       ; 14: Switch to input mode
+    ; Delay before switching to input to let line settle after TX
+    ; This prevents ringing from affecting edge detection
+    nop                          [7]        ; 14: ~280ns settling delay (8 cycles)
+    set    pindirs, 0                       ; 15: Switch to input mode
     ; Wait for start bit (falling edge from idle HIGH)
     ; Using 'wait' instructions for precise, deterministic edge detection
-    wait   1 pin 0                          ; 15: Wait for line to go HIGH (idle)
-    wait   0 pin 0                          ; 16: Wait for falling edge (start bit)
-    ; Falling edge detected precisely! Now oversample at 4x rate.
-    ; At current clock (40 cycles/bit for TX), RX bit = 32 cycles at 5/4 rate.
-    ; 4x oversampling = 8 cycles per sample.
-    ; 21 bits * 4 samples = 84 samples minimum.
-    ; Use nested loop: 4 outer * 32 inner = 128 samples (covers 32 bit periods)
-    ; Autopush at 32 bits sends data to FIFO (4 words fits in default RX FIFO)
-    ;
-    ; 8 cycles per sample: in(1) + nop[4](5) + jmp(2) = 8 cycles
+    wait   1 pin 0                          ; 16: Wait for line to go HIGH (idle)
+    set    x, 3                             ; 17: Setup outer loop count BEFORE edge detection
+    wait   0 pin 0                          ; 18: Wait for falling edge (start bit)
+    ; Falling edge detected! First sample now only 2 cycles (~69ns) after edge.
+    ; 7 cycles per sample: in(1) + nop[3](4) + jmp(2) = 7 cycles
+    ; This gives ~5.5x oversampling (38.4 cycles/bit ÷ 7 cycles/sample)
+    ; 21 bits × 5.5 = 115 samples needed, fits in 128
 
-    set    x, 3                             ; 17: 4 outer loop iterations
 outer_loop:
-    set    y, 31                            ; 18: 32 inner loop iterations
+    set    y, 31                            ; 19: 32 inner loop iterations
 inner_loop:
-    in     pins, 1                          ; 19: Sample pin into ISR (autopush every 32)
-    nop                          [4]        ; 20: Delay 5 cycles (1 + [4])
-    jmp    y--, inner_loop                  ; 21: Continue inner loop (2 cycles when taken)
-    jmp    x--, outer_loop                  ; 22: Continue outer loop
+    in     pins, 1                          ; 20: Sample pin into ISR (autopush every 32)
+    nop                          [3]        ; 21: Delay 4 cycles (1 + [3])
+    jmp    y--, inner_loop                  ; 22: Continue inner loop (2 cycles when taken)
+    jmp    x--, outer_loop                  ; 23: Continue outer loop
 
     ; Sampling complete - 128 samples pushed via autopush (4 x 32-bit words)
     ; Set pin back to output HIGH (idle state) before wrapping.
-    ; The C code always restarts SMs to instruction 0 before each transmit,
-    ; so the turnaround timing is controlled by when dshotUpdateComplete() is
-    ; called, not by delay loops here. We just need to ensure the pin is in
-    ; the correct idle state.
-    set    pindirs, 1                       ; 23: Switch back to output mode
-    set    pins, 1                          ; 24: Set pin HIGH (idle state)
-    nop                                     ; 25: Padding
+    set    pindirs, 1                       ; 24: Switch back to output mode
+    set    pins, 1                          ; 25: Set pin HIGH (idle state)
     nop                                     ; 26: Padding
     nop                                     ; 27: Padding
     nop                                     ; 28: Padding

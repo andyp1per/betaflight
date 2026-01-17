@@ -59,25 +59,25 @@ static const uint16_t dshot_600_bidir_program_instructions[] = {
     0x6041, //  4: out    y, 1
     0xe000, //  5: set    pins, 0
     0x006b, //  6: jmp    !y, 11
-    0xb942, //  7: nop                           [25]
-    0xe901, //  8: set    pins, 1                [9]
+    0xbd42, //  7: nop                           [29]
+    0xed01, //  8: set    pins, 1                [13]
     0x00e4, //  9: jmp    !osre, 4
     0x000e, // 10: jmp    14
-    0xab42, // 11: nop                           [11]
-    0xf701, // 12: set    pins, 1                [23]
-    0x01e4, // 13: jmp    !osre, 4               [1]
-    0xe080, // 14: set    pindirs, 0
-    0x20a0, // 15: wait   1 pin, 0
-    0x2020, // 16: wait   0 pin, 0
+    0xad42, // 11: nop                           [13]
+    0xfd01, // 12: set    pins, 1                [29]
+    0x00e4, // 13: jmp    !osre, 4
+    0xa742, // 14: nop                           [7]
+    0xe080, // 15: set    pindirs, 0
+    0x20a0, // 16: wait   1 pin, 0
     0xe023, // 17: set    x, 3
-    0xe05f, // 18: set    y, 31
-    0x4001, // 19: in     pins, 1
-    0xa442, // 20: nop                           [4]
-    0x0093, // 21: jmp    y--, 19
-    0x0052, // 22: jmp    x--, 18
-    0xe081, // 23: set    pindirs, 1
-    0xe001, // 24: set    pins, 1
-    0xa042, // 25: nop
+    0x2020, // 18: wait   0 pin, 0
+    0xe05f, // 19: set    y, 31
+    0x4001, // 20: in     pins, 1
+    0xa342, // 21: nop                           [3]
+    0x0094, // 22: jmp    y--, 20
+    0x0053, // 23: jmp    x--, 19
+    0xe081, // 24: set    pindirs, 1
+    0xe001, // 25: set    pins, 1
     0xa042, // 26: nop
     0xa042, // 27: nop
     0xa042, // 28: nop
