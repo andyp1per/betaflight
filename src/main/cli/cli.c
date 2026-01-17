@@ -27,10 +27,11 @@
 #include <ctype.h>
 
 #include "platform.h"
+#include "cli.h"
 
 // FIXME remove this for targets that don't need a CLI.  Perhaps use a no-op macro when USE_CLI is not enabled
 // signal that we're in cli mode
-bool cliMode = false;
+cliMode_e cliMode = CLI_MODE_OFF;
 
 #ifdef USE_CLI
 
@@ -125,6 +126,7 @@ bool cliMode = false;
 #include "msp/msp_box.h"
 #include "msp/msp_build_info.h"
 #include "msp/msp_protocol.h"
+#include "msp/msp_serial.h"
 
 #include "osd/osd.h"
 
@@ -172,11 +174,8 @@ bool cliMode = false;
 #include "telemetry/frsky_hub.h"
 #include "telemetry/telemetry.h"
 
-#include "cli.h"
-
 static serialPort_t *cliPort = NULL;
-static bool cliInteractive = false;
-static timeMs_t cliEntryTime = 0;
+static mspPort_t *cliMspPort = NULL;
 
 // Space required to set array parameters
 #define CLI_IN_BUFFER_SIZE  256
@@ -337,16 +336,16 @@ static void cliPrintInternal(bufWriter_t *writer, const char *str)
     }
 }
 
-static void cliWriterFlush(void)
-{
-    cliWriterFlushInternal(cliWriter);
-}
-
 #ifdef USE_CLI_DEBUG_PRINT
 #define CLI_DEBUG_EXPORT /* empty */
 #else
 #define CLI_DEBUG_EXPORT static
 #endif
+
+CLI_DEBUG_EXPORT void cliWriterFlush(void)
+{
+    cliWriterFlushInternal(cliWriter);
+}
 
 CLI_DEBUG_EXPORT void cliPrint(const char *str)
 {
@@ -6779,7 +6778,7 @@ STATIC_UNIT_TESTED void cliHelp(const char *cmdName, char *cmdline)
 static void processCharacter(const char c)
 {
     if (bufferIndex && (c == '\n' || c == '\r')) {
-        if (cliInteractive) {
+        if (cliMode == CLI_MODE_ON) {
             // echo new line back to terminal
             cliPrintLinefeed();
         }
@@ -6814,7 +6813,7 @@ static void processCharacter(const char c)
                     return;
                 }
             } else {
-                if (cliInteractive) {
+                if (cliMode == CLI_MODE_ON) {
                     cliPrintError("input", "UNKNOWN COMMAND, TRY 'HELP'");
                 } else {
                     cliPrint("ERR_CMD_NA: ");
@@ -6826,7 +6825,7 @@ static void processCharacter(const char c)
         cliClearInputBuffer();
 
         // prompt if in interactive mode
-        if (cliInteractive) {
+        if (cliMode == CLI_MODE_ON) {
             cliPrompt();
         }
 
@@ -6837,7 +6836,7 @@ static void processCharacter(const char c)
         cliBuffer[bufferIndex++] = c;
 
         // echo the character if interactive
-        if (cliInteractive) {
+        if (cliMode == CLI_MODE_ON) {
             cliWrite(c);
         }
     }
@@ -6901,28 +6900,40 @@ static void processCharacterInteractive(const char c)
     }
 }
 
-bool cliProcess(void)
+void cliProcess(void)
 {
     if (!cliWriter || !cliMode) {
-        return false;
+        return;
+    }
+
+    // Flush the buffer to get rid of any MSP data polls sent by configurator after CLI was invoked
+    cliWriterFlush();
+
+    if (cliMode == CLI_MODE_DEBUG) {
+        // Check all waiting characters for '@' exit command
+        while (serialRxBytesWaiting(cliPort)) {
+            uint8_t c = serialRead(cliPort);
+            if (c == '@') {
+                cliPrintLine("-- Exit CLI Debug --");
+                cliWriterFlush();
+                *cliBuffer = '\0';
+                bufferIndex = 0;
+                cliMspPort->port = cliPort;
+                cliPort = NULL;
+                cliMspPort = NULL;
+                cliErrorWriter = cliWriter = NULL;
+                cliMode = CLI_MODE_OFF;
+                return;
+            }
+        }
+        return;
     }
 
     while (serialRxBytesWaiting(cliPort)) {
         uint8_t c = serialRead(cliPort);
-        if (cliInteractive) {
-            processCharacterInteractive(c);
-        } else {
-            // handle terminating flow control character
-            if (c == 0x3 || (cmp32(millis(), cliEntryTime) > 2000)) { // CTRL-C (ETX) or 2 seconds timeout
-                cliWrite(0x3); // send end of text, terminating flow control
-                cliExit(false);
-                return cliMode;
-            }
-            processCharacter(c);
-        }
+
+        processCharacterInteractive(c);
     }
-    cliWriterFlush();
-    return cliMode;
 }
 
 static void cliExit(const bool reboot)
@@ -6930,8 +6941,7 @@ static void cliExit(const bool reboot)
     cliWriterFlush();
     waitForSerialPortToFinishTransmitting(cliPort);
     cliClearInputBuffer();
-    cliMode = false;
-    cliInteractive = false;
+    cliMode = CLI_MODE_OFF;
     // incase a motor was left running during motortest, clear it here
     mixerResetDisarmedMotors();
 
@@ -6940,36 +6950,34 @@ static void cliExit(const bool reboot)
     }
 }
 
-void cliEnter(serialPort_t *serialPort, bool interactive)
+void cliEnter(mspPort_t *mspPort, bool interactive)
 {
-    cliMode = true;
-    cliInteractive = interactive;
-    cliPort = serialPort;
-    cliEntryTime = millis();
-    cliClearInputBuffer();
-
-    if (interactive) {
-        setPrintfSerialPort(cliPort);
-    }
-
-    bufWriterInit(&cliWriterDesc, cliWriteBuffer, sizeof(cliWriteBuffer), (bufWrite_t)serialWriteBufBlockingShim, serialPort);
+    cliMode = interactive ? CLI_MODE_ON : CLI_MODE_DEBUG;
+    cliPort = mspPort->port;
+    cliMspPort = mspPort;
+    mspPort->port = 0;
+    setPrintfSerialPort(cliPort);
+    bufWriterInit(&cliWriterDesc, cliWriteBuffer, sizeof(cliWriteBuffer), (bufWrite_t)serialWriteBufBlockingShim, cliPort);
     cliErrorWriter = cliWriter = &cliWriterDesc;
 
-    if (interactive) {
+    if (cliMode == CLI_MODE_DEBUG) {
+        cliPrintLine("-- CLI Debug --");
+        cliWriterFlush();
+    } else {
 #ifndef MINIMAL_CLI
-        cliPrintLine("\r\nEntering CLI Mode, type 'exit' to reboot, or 'help'");
+        cliPrintLine("\r\nEntering CLI Mode, type 'exit' to return, or 'help'");
 #else
         cliPrintLine("\r\nCLI");
 #endif
-        // arming flag not released if exiting cli with no reboot for safety
+        cliWriterFlush();
         setArmingDisabled(ARMING_DISABLED_CLI);
+
         cliPrompt();
+        cliWriterFlush();
 
 #ifdef USE_CLI_BATCH
         resetCommandBatch();
 #endif
-    } else {
-        cliWrite(0x2); // send start of text, initiating flow control
     }
 }
 
