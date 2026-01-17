@@ -78,3 +78,7 @@ typedef struct mcuTypeInfo_s {
 const mcuTypeInfo_t *getMcuTypeInfo(void);
 mcuTypeId_e getMcuTypeId(void);
 const char *getMcuTypeName(void);
+
+#ifdef USE_CLI_DEBUG_PRINT
+#include "cli/cli.h"
+#endif
