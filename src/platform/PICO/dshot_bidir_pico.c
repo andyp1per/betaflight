@@ -101,12 +101,15 @@ static const int8_t gcrDecodeLut[32] = {
     -1,  0,  8,  1, -1,  4, 12, -1
 };
 
-// Edge detection decoder for 4x oversampled telemetry
+// Edge detection decoder for 5.5x oversampled telemetry
 // Algorithm:
 // 1. Scan samples to find edge transitions
-// 2. Normalize edge positions to handle timing jitter
-// 3. Convert run lengths between edges to GCR bits
-// 4. Decode GCR to 16-bit value and verify checksum
+// 2. Convert run lengths between edges to GCR bits
+// 3. Decode GCR to 16-bit value and verify checksum
+//
+// Note: Edge positions are NOT normalized. The first edge position varies
+// based on the GCR-encoded value (0 RPM starts at ~11 samples, real RPM
+// values can start at ~5-6 samples). Normalizing would add phantom bits.
 
 // Actual oversampling rate is 5.5x (38.4 PIO cycles/bit ÷ 7 cycles/sample)
 // For run-length decoding: len = round(diff / 5.5) = (diff * 2 + 5) / 11
@@ -139,13 +142,11 @@ static uint32_t decodeOversampledTelemetry(int motorIndex, const uint32_t *buffe
         return DSHOT_TELEMETRY_INVALID;
     }
 
-    // Normalize edge positions to handle timing jitter
-    // The 'wait' instruction detects edges at slightly different points.
-    // We offset all edges so the first edge is at position 11 (bit 2 at 5.5x oversampling).
-    int16_t offset = 11 - (int16_t)edgePositions[0];
-    for (int i = 0; i < edgeCount; i++) {
-        edgePositions[i] = (uint16_t)((int16_t)edgePositions[i] + offset);
-    }
+    // Note: We intentionally do NOT normalize edge positions.
+    // The first edge position varies based on the GCR-encoded value:
+    // - 0 RPM (0xFFF) has first edge at ~11 samples (bit 2)
+    // - Real RPM values can have first edge at ~5-6 samples (bit 1)
+    // Normalizing would add phantom bits to the first run for non-zero RPM.
 
     // Convert edge positions to GCR bits using run-length decoding
     // Each run of N samples at 5.5x oversampling: len = round(N / 5.5) = (N * 2 + 5) / 11
