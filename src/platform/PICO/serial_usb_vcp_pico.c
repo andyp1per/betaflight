@@ -96,9 +96,17 @@ static void usbVcpWriteBuf(serialPort_t *instance, const void *data, int count)
 {
     UNUSED(instance);
 
+#ifdef USE_CLI_DEBUG_PRINT
+    // Only require configured (USB enumerated), not connected (DTR set)
+    // This allows output to terminals that don't set DTR (e.g., plink)
+    if (!cdc_usb_configured()) {
+        return;
+    }
+#else
     if (!(cdc_usb_connected() && cdc_usb_configured())) {
         return;
     }
+#endif
 
     const uint8_t *p = data;
     while (count > 0) {
@@ -121,9 +129,16 @@ static bool usbVcpFlush(vcpPort_t *port)
         return true;
     }
 
+#ifdef USE_CLI_DEBUG_PRINT
+    // Only require configured (USB enumerated), not connected (DTR set)
+    if (!cdc_usb_configured()) {
+        return false;
+    }
+#else
     if (!cdc_usb_connected() || !cdc_usb_configured()) {
         return false;
     }
+#endif
 
     const uint8_t *p = port->txBuf;
     while (count > 0) {
