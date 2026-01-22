@@ -49,15 +49,18 @@ FAST_DATA_ZERO_INIT dshotTelemetryCycleCounters_t dshotDMAHandlerCycleCounters;
 // 'wait' instructions for precise edge synchronization, then samples 128 bits
 // into 4 words via autopush. Edge positions are converted to GCR bits using
 // run-length decoding (based on ArduPilot's proven algorithm).
+//
+// ERROR RATE LIMITATION:
+// With spinning motors, expect ~5-8% decode errors due to hardware constraints.
+// This is caused by inter-edge timing jitter where gaps fall on the boundary
+// between 1-bit and 2-bit runs. With ~5x oversampling and ESC timing jitter of
+// ~2 samples, borderline gaps cannot be reliably decoded. At 0 RPM (stationary),
+// error rate is <1% which satisfies Configurator thresholds.
 
 bool dshot_program_bidir_init(PIO pio, uint sm, int offset, uint pin)
 {
     bprintf("dshot_program_bidir_init on pin %d", pin);
-#ifdef DSHOT_DEBUG_PIO
-    pio_sm_config config = dshot_600_bidir_debug_program_get_default_config(offset);
-#else
     pio_sm_config config = dshot_600_bidir_program_get_default_config(offset);
-#endif
 
     sm_config_set_set_pins(&config, pin, 1);
     sm_config_set_in_pins(&config, pin);
@@ -137,11 +140,6 @@ static failReason_e lastFailReason = FAIL_NONE;
 // Store edge info for calibration and debug
 static uint16_t lastEdgePositions[MAX_EDGES];
 static int lastEdgeCount;
-
-#ifdef PICO_TRACE
-#define dbgEdgePositions lastEdgePositions
-#define dbgEdgeCount lastEdgeCount
-#endif
 
 static uint32_t decodeOversampledTelemetry(int motorIndex, const uint32_t *buffer)
 {
@@ -278,12 +276,12 @@ static uint32_t decodeOversampledTelemetry(int motorIndex, const uint32_t *buffe
                     uint8_t sym1 = (gcr20 >> 5) & 0x1F;
                     uint8_t sym0 = gcr20 & 0x1F;
                     bprintf("M0 GCR fail: syms=%02x,%02x,%02x,%02x gcr20=%05x edges=%d",
-                            sym3, sym2, sym1, sym0, gcr20, dbgEdgeCount);
+                            sym3, sym2, sym1, sym0, gcr20, lastEdgeCount);
                     bprintf("  pos: %d %d %d %d %d %d %d %d %d %d %d %d",
-                            dbgEdgePositions[0], dbgEdgePositions[1], dbgEdgePositions[2],
-                            dbgEdgePositions[3], dbgEdgePositions[4], dbgEdgePositions[5],
-                            dbgEdgePositions[6], dbgEdgePositions[7], dbgEdgePositions[8],
-                            dbgEdgePositions[9], dbgEdgePositions[10], dbgEdgePositions[11]);
+                            lastEdgePositions[0], lastEdgePositions[1], lastEdgePositions[2],
+                            lastEdgePositions[3], lastEdgePositions[4], lastEdgePositions[5],
+                            lastEdgePositions[6], lastEdgePositions[7], lastEdgePositions[8],
+                            lastEdgePositions[9], lastEdgePositions[10], lastEdgePositions[11]);
                 }
 #endif
             } else {
@@ -325,12 +323,12 @@ static uint32_t decodeOversampledTelemetry(int motorIndex, const uint32_t *buffe
     if (motorIndex == 0 && (++successCount % 5000) == 1) {
         uint16_t eRPM = (decodedValue >> 4) & 0xFFF;
         bprintf("M0 OK: eRPM=%u (raw=%04x) edges=%d cal=%d",
-                eRPM, decodedValue, dbgEdgeCount, calibrationComplete);
+                eRPM, decodedValue, lastEdgeCount, calibrationComplete);
         bprintf("  pos: %d %d %d %d %d %d %d %d %d %d %d %d",
-                dbgEdgePositions[0], dbgEdgePositions[1], dbgEdgePositions[2],
-                dbgEdgePositions[3], dbgEdgePositions[4], dbgEdgePositions[5],
-                dbgEdgePositions[6], dbgEdgePositions[7], dbgEdgePositions[8],
-                dbgEdgePositions[9], dbgEdgePositions[10], dbgEdgePositions[11]);
+                lastEdgePositions[0], lastEdgePositions[1], lastEdgePositions[2],
+                lastEdgePositions[3], lastEdgePositions[4], lastEdgePositions[5],
+                lastEdgePositions[6], lastEdgePositions[7], lastEdgePositions[8],
+                lastEdgePositions[9], lastEdgePositions[10], lastEdgePositions[11]);
     }
 #endif
 
@@ -430,6 +428,10 @@ bool dshotDecodeTelemetry(void)
             sampleBuffer[i] = pio_sm_get(motor->pio, motor->pio_sm);
         }
         if (!readOk) {
+            // Drain remaining RX FIFO to maintain frame alignment
+            while (!pio_sm_is_rx_fifo_empty(motor->pio, motor->pio_sm)) {
+                (void)pio_sm_get(motor->pio, motor->pio_sm);
+            }
             continue;
         }
 
