@@ -190,6 +190,9 @@ static uint32_t decodeOversampledTelemetry(int motorIndex, const uint32_t *buffe
     for (int i = 1; i < lastEdgeCount; i++) {
         int32_t diff = lastEdgePositions[i] - lastEdgePositions[i - 1];
         uint32_t len = (uint32_t)(diff * samplesToBits + 0.5f);
+        // Ensure len >= 1 to avoid undefined behavior in (1U << (len - 1)).
+        // If edges are so close that len rounds to 0, treat as minimum 1-bit gap.
+        // This matches STM32 decoder which uses MAX(..., 1). Checksum will catch errors.
         if (len == 0) {
             len = 1;
         }
