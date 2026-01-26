@@ -196,6 +196,12 @@ static uint32_t decodeOversampledTelemetry(int motorIndex, const uint32_t *buffe
         if (len == 0) {
             len = 1;
         }
+        // Reject implausibly long runs to avoid undefined shift behavior (len >= 32)
+        // and to early-exit when the frame is clearly invalid
+        if (len > (21U - coreBits)) {
+            coreBits = 22U;  // Force invalid
+            break;
+        }
         coreGcr <<= len;
         coreGcr |= 1U << (len - 1U);
         coreBits += len;
