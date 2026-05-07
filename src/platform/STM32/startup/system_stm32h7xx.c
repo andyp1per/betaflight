@@ -558,11 +558,44 @@ void SystemClock_Config(void)
 
     RCC_PeriphCLKInitTypeDef RCC_PeriphClkInit;
 
-    // Configure HSI48 as peripheral clock for USB
+#if defined(USE_USB_CLOCK_PLL3)
+    // PLL3_Q-based USB clock path. HSE → PLL3 → 48 MHz, locked-and-stable.
+    // Mirrors what ArduPilot / ChibiOS use on the same H757 chip
+    // (STM32_USBSEL = STM32_USBSEL_PLL3_Q_CK in stm32h7_mcuconf.h).
+    // The HSI48 + CRS path has a startup race on this dual-core part where
+    // HSI48 isn't accurate enough before USB SOF arrives to calibrate it, and
+    // USB never enumerates so SOF never arrives.
+    //
+    // Dividers below assume HSE = 24 MHz (CubeNode). For other HSE values, M
+    // must be adjusted so the PLL3 input is in the 4-8 MHz range.
+    #if HSE_VALUE != 24000000
+        #error "USE_USB_CLOCK_PLL3 dividers are tuned for HSE=24MHz; please add a case"
+    #endif
+    RCC_PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USB;
+    RCC_PeriphClkInit.PLL3.PLL3M       = 4;                       // 24 / 4 = 6 MHz PLL3 input
+    RCC_PeriphClkInit.PLL3.PLL3N       = 80;                      // 6 * 80 = 480 MHz VCO
+    RCC_PeriphClkInit.PLL3.PLL3P       = 2;
+    RCC_PeriphClkInit.PLL3.PLL3Q       = 10;                      // 480 / 10 = 48 MHz USB
+    RCC_PeriphClkInit.PLL3.PLL3R       = 2;
+    RCC_PeriphClkInit.PLL3.PLL3RGE     = RCC_PLL3VCIRANGE_1;      // 4-8 MHz input range
+    RCC_PeriphClkInit.PLL3.PLL3VCOSEL  = RCC_PLL3VCOWIDE;         // 192-960 MHz VCO range
+    RCC_PeriphClkInit.PLL3.PLL3FRACN   = 0;
+    RCC_PeriphClkInit.UsbClockSelection = RCC_USBCLKSOURCE_PLL3;
+    HAL_RCCEx_PeriphCLKConfig(&RCC_PeriphClkInit);
+#else
+    // Configure HSI48 as peripheral clock for USB.
+    // HSI48ON was set in SystemInit but never waited on — selecting HSI48 as the
+    // USB clock source before HSI48RDY asserts means the OTG peripheral starts
+    // with an unstable / dead clock and never enumerates. Mirror what ChibiOS
+    // does in os/hal/ports/STM32/STM32H7xx/hal_lld.c:301-304: spin until ready.
+    while ((RCC->CR & RCC_CR_HSI48RDY) == 0) {
+        // HSI48 typically stabilises in well under 1 ms; no timeout needed.
+    }
 
     RCC_PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USB;
     RCC_PeriphClkInit.UsbClockSelection = RCC_USBCLKSOURCE_HSI48;
     HAL_RCCEx_PeriphCLKConfig(&RCC_PeriphClkInit);
+#endif
 
     // Configure CRS for dynamic calibration of HSI48
     // While ES0392 Rev 5 "STM32H742xI/G and STM32H743xI/G device limitations" states CRS not working for REV.Y,
@@ -891,6 +924,28 @@ void SystemInit (void)
 
     SystemClock_Config();
     SystemCoreClockUpdate();
+
+#if defined(CORE_CM7) && defined(USE_CUBEFRAMEWORK_M7)
+    // M7 is the boot core on STM32H757. The M4 stays halted by default
+    // until RCC_GCR.BOOT_C2 is set. Probe the M4 vector table at the
+    // partition boundary; only release the M4 if a sane image is present
+    // (valid stack pointer + PC inside the M4 flash region).
+    {
+        const uint32_t m4_vector_base = 0x08180000U;
+        const uint32_t m4_sp = *(volatile uint32_t *)(m4_vector_base + 0U);
+        const uint32_t m4_pc = *(volatile uint32_t *)(m4_vector_base + 4U);
+        const uint32_t sp_min = 0x10000000U;  // ITCM range start (any valid M4 RAM target is above this)
+        const uint32_t sp_max = 0x40000000U;
+        const uint32_t pc_min = 0x08180000U;
+        const uint32_t pc_max = 0x081FFFFFU;
+        if (m4_sp >= sp_min && m4_sp <= sp_max &&
+            m4_pc >= pc_min && m4_pc <= pc_max) {
+            RCC->GCR |= RCC_GCR_BOOT_C2;
+            __DSB();
+        }
+        /* else: no M4 image flashed — leave M4 halted. */
+    }
+#endif
 
 #ifdef STM32H7
     initialiseD2MemorySections();

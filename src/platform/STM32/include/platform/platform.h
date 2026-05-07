@@ -95,6 +95,13 @@
 #define RCC_RSR_SFTRSTF         RCC_RSR_SFT2RSTF
 #endif
 
+// On dual-core H7 (H745/H747/H755/H757), the single-core RCC_RSR_SFTRSTF
+// symbol does not exist; M7's reset flag is RCC_RSR_SFT1RSTF. Map it here so
+// shared code that checks the soft-reset flag works on the M7 side too.
+#if defined(CORE_CM7) && defined(STM32H757xx)
+#define RCC_RSR_SFTRSTF         RCC_RSR_SFT1RSTF
+#endif
+
 #elif defined(STM32H563xx) || defined(STM32H562xx)
 #include "stm32h5xx.h"
 #include "stm32h5xx_hal.h"
