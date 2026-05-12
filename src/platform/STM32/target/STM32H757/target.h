@@ -75,6 +75,19 @@
 #define USE_EXTI
 #define USE_TIMER_UP_CONFIG
 
+// SDMMC needs explicit pin config + peripheral init on H7 (matches the pattern
+// used by H723/H725/H735 targets). The common_post.h default leaves both at 0,
+// which means init.c's sdioPinConfigure()/sdioInitialize() block is skipped
+// and sdcard_init() then has nothing to talk to.
+#ifdef USE_SDCARD
+#if !defined(ENABLE_SDIO_INIT)
+#define ENABLE_SDIO_INIT 1
+#endif
+#if !defined(ENABLE_SDIO_PIN_CONFIG)
+#define ENABLE_SDIO_PIN_CONFIG 1
+#endif
+#endif
+
 #define FLASH_PAGE_SIZE ((uint32_t)0x20000) // 128K sectors
 
 #if defined(USE_LED_STRIP) && !defined(USE_LED_STRIP_CACHE_MGMT)
