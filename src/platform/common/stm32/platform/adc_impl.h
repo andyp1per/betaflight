@@ -39,7 +39,8 @@
 #endif
 #elif defined(STM32H7)
 #ifdef USE_ADC_INTERNAL
-#define ADC_TAG_MAP_COUNT 30
+// 3 internal pseudo entries plus the 28 pin entries counted below
+#define ADC_TAG_MAP_COUNT 31
 #else
 #define ADC_TAG_MAP_COUNT 28
 #endif

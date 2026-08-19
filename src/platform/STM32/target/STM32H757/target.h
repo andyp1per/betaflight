@@ -39,6 +39,10 @@
 #define USE_I2C_DEVICE_3
 #define USE_I2C_DEVICE_4
 
+// Dual-core H7 parts start at UFBGA169/LQFP176, so the port F analog inputs
+// are always bonded out.
+#define USE_ADC_LARGE_PACKAGE_INPUTS
+
 #define USE_VCP
 
 #define USE_UART1
