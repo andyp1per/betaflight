@@ -37,6 +37,7 @@
 #define USE_I2C_DEVICE_1
 #define USE_I2C_DEVICE_2
 #define USE_I2C_DEVICE_3
+#define USE_I2C_DEVICE_4
 
 #define USE_VCP
 
